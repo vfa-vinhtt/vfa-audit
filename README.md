@@ -6,7 +6,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 |-----|------|-----------|
 | **Secrets** | [Gitleaks](https://github.com/gitleaks/gitleaks) | API keys, tokens, credentials trong code và git history |
 | **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) | Lỗ hổng đã biết trong dependencies (cross-check 2 database) |
-| **License** | [Trivy](https://github.com/aquasecurity/trivy) | License thư viện và font bị hạn chế (GPL, AGPL, SSPL…) |
+| **License** | [Trivy](https://github.com/aquasecurity/trivy) + [ExifTool](https://exiftool.org/) | License thư viện và metadata bản quyền/license của font |
 
 ---
 
@@ -17,9 +17,10 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 | `gitleaks` | `brew install gitleaks` |
 | `trivy` | `brew install trivy` |
 | `grype` | `brew install grype` |
+| `exiftool` | `brew install exiftool` |
 | `python3` | Có sẵn trên macOS / Linux |
 
-> **Tự động cài:** Script tự phát hiện tools còn thiếu và cài qua Homebrew (macOS) hoặc official install scripts (Linux) — không cần cài tay trước.
+> **Tự động cài:** Script tự phát hiện tools còn thiếu và cài qua Homebrew (macOS) hoặc official install scripts / package manager (Linux) — không cần cài tay trước.
 
 ---
 
@@ -100,29 +101,34 @@ reports/
     ├── grype.txt            # CVE findings (Grype — table)
     ├── trivy-license.json   # License findings (Trivy — JSON)
     ├── trivy-license.txt    # License findings (Trivy — table)
-    ├── summary.txt          # Bảng tổng hợp (human-readable)
+    ├── font-license-exiftool.json # Font metadata (ExifTool — JSON)
+    ├── font-license-exiftool.txt  # Review license/copyright font
+    ├── summary.md           # Bảng tổng hợp Markdown
     └── summary.json         # Tổng hợp dạng JSON
 ```
 
 > Nếu lệnh `zip` không khả dụng, script giữ nguyên folder thay vì dừng lại.
 
-### Ví dụ summary.txt
+### Ví dụ summary.md
 
-```
-══════════════════════════════════════════════════════════════
-  Date:      2025-06-09 14:30:22
-  Project:   /Users/dev/my-project
-  Severity:  HIGH+
-──────────────────────────────────────────────────────────────
-  Scanner                            Findings
-  ──────────────────────────────     ────────
-  Secrets      (Gitleaks)                   2
-  CVE          (Trivy)                     14
-  CVE          (Grype)                     11
-  License      (Trivy)                      3
-  ──────────────────────────────     ────────
-  TOTAL                                    30
-══════════════════════════════════════════════════════════════
+```markdown
+# Security Audit Summary
+
+| Field | Value |
+|---|---|
+| Date | 2025-06-09 14:30:22 |
+| Project | `/Users/dev/my-project` |
+| Severity | `HIGH+` |
+| Status | `WARN` |
+
+| Scanner | Findings |
+|---|---:|
+| Secrets (Gitleaks) | 2 |
+| CVE (Trivy) | 14 |
+| CVE (Grype) | 11 |
+| License (Trivy) | 3 |
+| Font License (ExifTool) | 2 |
+| **Total** | **32** |
 ```
 
 ### Ví dụ summary.json
@@ -137,7 +143,9 @@ reports/
     "cve_trivy":      14,
     "cve_grype":      11,
     "license_issues": 3,
-    "total":          30
+    "font_files":     8,
+    "font_license_issues": 2,
+    "total":          32
   },
   "tool_errors": 0,
   "output_dir":  "/path/to/reports/20250609_143022_my-project"
@@ -161,11 +169,17 @@ reports/
 ### Về License Scan (Trivy)
 
 - Sử dụng `--license-full`: Trivy scan cả **nội dung file** lẫn metadata package manager — tăng độ chính xác.
-- Font file độc lập (`.ttf`, `.woff`, `.otf`) **không qua package manager** → cần review thủ công.
 - License bị flag theo category:
   - `restricted` — GPL-2.0, GPL-3.0, AGPL-3.0, SSPL-1.0…
   - `reciprocal` — MPL-2.0, LGPL-2.1, LGPL-3.0, EUPL…
   - `unknown` — không xác định được license
+
+### Về Font License Scan (ExifTool)
+
+- ExifTool đọc metadata trực tiếp từ font độc lập: `.ttf`, `.otf`, `.woff`, `.woff2`.
+- Script tạo `font-license-exiftool.json` để lưu metadata gốc và `font-license-exiftool.txt` để review nhanh.
+- Font bị flag khi thiếu metadata license/quyền sử dụng hoặc có cụm hạn chế như `personal use`, `non-commercial`, `trial`, `demo`, `restricted`, `proprietary`, `GPL`, `AGPL`, `SSPL`.
+- Metadata font không thay thế review pháp lý; nếu font không ghi rõ license, nên kiểm tra lại nguồn tải hoặc file license đi kèm.
 
 ---
 

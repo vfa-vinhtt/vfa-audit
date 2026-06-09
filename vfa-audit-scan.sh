@@ -4,7 +4,7 @@
 #
 #   Layer 1 — Secrets  : Gitleaks  (credentials, tokens, API keys)
 #   Layer 2 — CVE      : Trivy + Grype  (known dependency vulnerabilities)
-#   Layer 3 — License  : Trivy  (library & font license compliance)
+#   Layer 3 — License  : Trivy + ExifTool  (library & font license compliance)
 #
 # Usage:
 #   ./vfa-audit-scan.sh [OPTIONS] [project-path]
@@ -47,6 +47,8 @@ SECRET_COUNT=0
 TRIVY_CVE_COUNT=0
 GRYPE_CVE_COUNT=0
 LICENSE_ISSUE_COUNT=0
+FONT_FILE_COUNT=0
+FONT_LICENSE_ISSUE_COUNT=0
 TOOL_ERRORS=0
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,10 +85,10 @@ ${BLD}USAGE${NC}
   ${SCRIPT_NAME} [OPTIONS] [project-path]
 
 ${BLD}DESCRIPTION${NC}
-  3-layer source code security audit combining three scanners:
+  3-layer source code security audit combining four scanners:
     • Secrets  — Gitleaks: credentials, tokens, API keys (files + git history)
     • CVE      — Trivy + Grype: known vulnerabilities in dependencies
-    • License  — Trivy: library and font license compliance
+    • License  — Trivy + ExifTool: library and font license compliance
 
   If project-path is omitted, the script scans the current directory.
   This makes it safe to run directly from a raw GitHub URL.
@@ -118,7 +120,11 @@ ${BLD}OUTPUT${NC}
     grype.txt              CVE findings (Grype, table)
     trivy-license.json     License findings (JSON)
     trivy-license.txt      License findings (table)
-    summary.txt            Human-readable summary
+    font-license-exiftool.json
+                          Font metadata from ExifTool (JSON)
+    font-license-exiftool.txt
+                          Font license/copyright review (text)
+    summary.md             Markdown summary
     summary.json           Machine-readable summary
 EOF
 }
@@ -174,6 +180,16 @@ install_tool() {
     grype)
       curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
         | sudo sh -s -- -b /usr/local/bin && return 0 ;;
+    exiftool)
+      if cmd_ok apt-get; then
+        sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl && return 0
+      fi
+      if cmd_ok apk; then
+        sudo apk add --no-cache exiftool && return 0
+      fi
+      if cmd_ok yum; then
+        sudo yum install -y perl-Image-ExifTool && return 0
+      fi ;;
     gitleaks)
       local tag ver arch
       tag=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
@@ -207,6 +223,7 @@ check_tools() {
   [[ "$SKIP_SECRETS" != true ]] && _check gitleaks "gitleaks version"
   [[ "$SKIP_CVE" != true || "$SKIP_LICENSE" != true ]] && _check trivy "trivy version"
   [[ "$SKIP_CVE" != true ]] && _check grype "grype version"
+  [[ "$SKIP_LICENSE" != true ]] && _check exiftool "exiftool -ver"
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     if [[ "$AUTO_INSTALL" == true ]]; then
@@ -215,7 +232,7 @@ check_tools() {
       done
     else
       err "Missing tools: ${missing[*]}"
-      log "Install:  brew install gitleaks trivy grype"
+      log "Install:  brew install gitleaks trivy grype exiftool"
       log "Or rerun: $SCRIPT_NAME --install ..."
       exit 2
     fi
@@ -336,7 +353,7 @@ except Exception:
 
 # ─────────────────────────────────────────────────────────────────────────────
 run_license_scan() {
-  section "3/3  License  (Trivy)"
+  section "3a/3  License  (Trivy)"
   local lj="${OUTPUT_DIR}/trivy-license.json"
   local lt="${OUTPUT_DIR}/trivy-license.txt"
 
@@ -391,33 +408,141 @@ except Exception:
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+run_font_license_scan() {
+  section "3b/3  Font License  (ExifTool)"
+  local fj="${OUTPUT_DIR}/font-license-exiftool.json"
+  local ft="${OUTPUT_DIR}/font-license-exiftool.txt"
+
+  log "Reading font license and copyright metadata..."
+
+  exiftool -r -json -m -q -q \
+    -ext ttf -ext otf -ext woff -ext woff2 \
+    -FileName -Directory -FileType -MIMEType \
+    -FontFamily -FontSubfamily -FontName -Name \
+    -Copyright -CopyrightNotice -Rights \
+    -License -LicenseInfo -LicenseURL -UsageTerms \
+    -Description -Designer -VendorID \
+    "$PROJECT_PATH" > "$fj" 2>/dev/null || true
+
+  if [[ -f "$fj" ]]; then
+    local font_counts
+    if ! font_counts="$(python3 - "$fj" "$ft" 2>/dev/null <<'PY'
+import json
+import re
+import sys
+
+src, report = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(src, encoding="utf-8"))
+except Exception:
+    data = []
+
+license_keys = ("license", "rights", "usage", "permission", "terms")
+copyright_keys = ("copyright",)
+restricted = re.compile(
+    r"(agpl|gpl|sspl|non[- ]?commercial|personal use|trial|demo|evaluation|"
+    r"not for commercial|not\s+for\s+resale|restricted|proprietary|desktop license)",
+    re.I,
+)
+
+def values_for(item, needles):
+    vals = []
+    for key, val in item.items():
+        key_l = key.lower()
+        if any(n in key_l for n in needles):
+            if isinstance(val, list):
+                vals.extend(str(v) for v in val if v not in (None, ""))
+            elif val not in (None, ""):
+                vals.append(str(val))
+    return vals
+
+rows = []
+issues = 0
+for item in data:
+    path = item.get("SourceFile") or "/".join(
+        p for p in (item.get("Directory"), item.get("FileName")) if p
+    )
+    license_vals = values_for(item, license_keys)
+    copyright_vals = values_for(item, copyright_keys)
+    combined = " | ".join(license_vals + copyright_vals)
+
+    reasons = []
+    if not license_vals:
+        reasons.append("missing license metadata")
+    if restricted.search(combined):
+        reasons.append("restricted/non-commercial terms")
+
+    status = "ISSUE" if reasons else "OK"
+    if reasons:
+        issues += 1
+
+    rows.append({
+        "path": path,
+        "status": status,
+        "reason": ", ".join(reasons) if reasons else "-",
+        "license": " | ".join(license_vals) if license_vals else "-",
+        "copyright": " | ".join(copyright_vals) if copyright_vals else "-",
+    })
+
+with open(report, "w", encoding="utf-8") as out:
+    out.write("Font License Review (ExifTool)\n")
+    out.write("=" * 80 + "\n")
+    out.write(f"Fonts scanned: {len(rows)}\n")
+    out.write(f"Issues:        {issues}\n\n")
+    for row in rows:
+        out.write(f"[{row['status']}] {row['path']}\n")
+        out.write(f"  Reason:    {row['reason']}\n")
+        out.write(f"  License:   {row['license']}\n")
+        out.write(f"  Copyright: {row['copyright']}\n\n")
+
+print(len(rows), issues)
+PY
+)"; then
+      font_counts="0 0"
+    fi
+    read -r FONT_FILE_COUNT FONT_LICENSE_ISSUE_COUNT <<< "$font_counts"
+  fi
+
+  if [[ "$FONT_FILE_COUNT" -eq 0 ]]; then
+    ok "No standalone font files found"
+  elif [[ "$FONT_LICENSE_ISSUE_COUNT" -eq 0 ]]; then
+    ok "ExifTool: ${FONT_FILE_COUNT} font file(s), no flagged font license metadata"
+  else
+    warn "ExifTool: ${FONT_LICENSE_ISSUE_COUNT}/${FONT_FILE_COUNT} font file(s) need license review  →  ${ft}"
+    [[ "$VERBOSE" == true && -f "$ft" ]] && cat "$ft"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 generate_summary() {
   section "Audit Summary"
-  local total=$((SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT))
-  local stxt="${OUTPUT_DIR}/summary.txt"
+  local total=$((SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
+  local stxt="${OUTPUT_DIR}/summary.md"
   local sjson="${OUTPUT_DIR}/summary.json"
-
-  local SEP="══════════════════════════════════════════════════════════════"
-  local DIV="──────────────────────────────────────────────────────────────"
+  local status="WARN"
+  [[ $total -eq 0 && $TOOL_ERRORS -eq 0 ]] && status="PASS"
 
   {
-    echo "$SEP"
-    printf '  %-18s %s\n' "Security Audit" ""
-    printf '  %-18s %s\n' "Date:"    "$(date '+%Y-%m-%d %H:%M:%S')"
-    printf '  %-18s %s\n' "Project:" "$PROJECT_PATH"
-    printf '  %-18s %s\n' "Severity:" "${SEVERITY}+"
-    echo "$DIV"
-    printf '  %-34s %8s\n' "Scanner"                        "Findings"
-    printf '  %-34s %8s\n' "──────────────────────────────" "────────"
-    printf '  %-34s %8d\n' "Secrets      (Gitleaks)"        $SECRET_COUNT
-    printf '  %-34s %8d\n' "CVE          (Trivy)"           $TRIVY_CVE_COUNT
-    printf '  %-34s %8d\n' "CVE          (Grype)"           $GRYPE_CVE_COUNT
-    printf '  %-34s %8d\n' "License      (Trivy)"           $LICENSE_ISSUE_COUNT
-    printf '  %-34s %8s\n' "──────────────────────────────" "────────"
-    printf '  %-34s %8d\n' "TOTAL"                          $total
-    [[ $TOOL_ERRORS -gt 0 ]] && \
-      printf '  %-34s %8d\n' "Tool errors"                  $TOOL_ERRORS
-    echo "$SEP"
+    echo "# Security Audit Summary"
+    echo ""
+    echo "| Field | Value |"
+    echo "|---|---|"
+    printf '| Date | %s |\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '| Project | `%s` |\n' "$PROJECT_PATH"
+    printf '| Severity | `%s+` |\n' "$SEVERITY"
+    printf '| Status | `%s` |\n' "$status"
+    echo ""
+    echo "| Scanner | Findings |"
+    echo "|---|---:|"
+    printf '| Secrets (Gitleaks) | %d |\n' "$SECRET_COUNT"
+    printf '| CVE (Trivy) | %d |\n' "$TRIVY_CVE_COUNT"
+    printf '| CVE (Grype) | %d |\n' "$GRYPE_CVE_COUNT"
+    printf '| License (Trivy) | %d |\n' "$LICENSE_ISSUE_COUNT"
+    printf '| Font License (ExifTool) | %d |\n' "$FONT_LICENSE_ISSUE_COUNT"
+    printf '| **Total** | **%d** |\n' "$total"
+    if [[ $TOOL_ERRORS -gt 0 ]]; then
+      printf '| Tool errors | %d |\n' "$TOOL_ERRORS"
+    fi
   } | tee "$stxt"
 
   cat > "$sjson" <<JSON
@@ -430,6 +555,8 @@ generate_summary() {
     "cve_trivy":      ${TRIVY_CVE_COUNT},
     "cve_grype":      ${GRYPE_CVE_COUNT},
     "license_issues": ${LICENSE_ISSUE_COUNT},
+    "font_files":     ${FONT_FILE_COUNT},
+    "font_license_issues": ${FONT_LICENSE_ISSUE_COUNT},
     "total":          ${total}
   },
   "tool_errors": ${TOOL_ERRORS},
@@ -463,7 +590,10 @@ main() {
 
   [[ "$SKIP_SECRETS" != true ]] && run_secrets_scan
   [[ "$SKIP_CVE"     != true ]] && run_cve_scan
-  [[ "$SKIP_LICENSE" != true ]] && run_license_scan
+  if [[ "$SKIP_LICENSE" != true ]]; then
+    run_license_scan
+    run_font_license_scan
+  fi
 
   generate_summary
 
