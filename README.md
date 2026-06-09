@@ -51,7 +51,6 @@ chmod +x audit-scan.sh
 | `--skip-cve` | — | Bỏ qua scan CVE (Trivy + Grype) |
 | `--skip-license` | — | Bỏ qua scan license |
 | `--no-git-history` | — | Chỉ scan file hiện tại, bỏ qua git history |
-| `--fail-on-findings` | — | Exit code 1 khi có findings (dùng trong CI/CD) |
 | `-v, --verbose` | — | Hiện toàn bộ output của từng tool |
 | `-h, --help` | — | Hiển thị hướng dẫn |
 
@@ -67,11 +66,6 @@ chmod +x audit-scan.sh
 **Chỉ báo cáo từ HIGH trở lên:**
 ```bash
 ./audit-scan.sh --severity HIGH /path/to/project
-```
-
-**Dùng trong CI/CD — build fail nếu có findings:**
-```bash
-./audit-scan.sh --severity HIGH --fail-on-findings /path/to/project
 ```
 
 **Scan nhanh, chỉ CVE (bỏ secrets và license):**
@@ -107,7 +101,7 @@ reports/
     ├── trivy-license.json   # License findings (Trivy — JSON)
     ├── trivy-license.txt    # License findings (Trivy — table)
     ├── summary.txt          # Bảng tổng hợp (human-readable)
-    └── summary.json         # Tổng hợp dạng JSON (CI integration)
+    └── summary.json         # Tổng hợp dạng JSON
 ```
 
 > Nếu lệnh `zip` không khả dụng, script giữ nguyên folder thay vì dừng lại.
@@ -150,60 +144,6 @@ reports/
 }
 ```
 
----
-
-## Tích hợp CI/CD
-
-Tools thiếu được cài tự động khi script chạy — không cần bước cài đặt riêng trong pipeline.
-
-### GitHub Actions
-
-```yaml
-name: Security Audit
-
-on: [push, pull_request]
-
-jobs:
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # bắt buộc để Gitleaks scan toàn bộ git history
-
-      - name: Run security audit
-        run: |
-          chmod +x tools/audits/audit-scan.sh
-          tools/audits/audit-scan.sh \
-            --severity HIGH \
-            --fail-on-findings \
-            ${{ github.workspace }}
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-audit-report
-          path: tools/audits/reports/*.zip
-```
-
-### GitLab CI
-
-```yaml
-security-audit:
-  stage: test
-  script:
-    - chmod +x tools/audits/audit-scan.sh
-    - tools/audits/audit-scan.sh --severity HIGH --fail-on-findings $CI_PROJECT_DIR
-  artifacts:
-    when: always
-    paths:
-      - tools/audits/reports/*.zip
-    expire_in: 30 days
-```
-
----
-
 ## Lưu ý quan trọng
 
 ### Về Secret Scan (Gitleaks)
@@ -233,6 +173,5 @@ security-audit:
 
 | Code | Ý nghĩa |
 |------|---------|
-| `0` | Scan thành công, không có findings (hoặc `--fail-on-findings` chưa bật) |
-| `1` | Có findings và `--fail-on-findings` được bật |
+| `0` | Script chạy xong, kể cả khi có findings |
 | `2` | Lỗi tham số hoặc không thể cài tools |

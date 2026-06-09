@@ -7,8 +7,10 @@
 #   Layer 3 — License  : Trivy  (library & font license compliance)
 #
 # Usage:
-#   ./vfa-audit-scan.sh[OPTIONS] [project-path]
-#   curl -fsSL <raw-github-url>/vfa-audit-scan.sh| bash
+#   ./vfa-audit-scan.sh [OPTIONS] [project-path]
+#   curl -fsSL <raw-github-url>/vfa-audit-scan.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- --severity HIGH
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -25,14 +27,13 @@ else
 fi
 SCRIPT_NAME="$(basename "$SCRIPT_SOURCE")"
 case "$SCRIPT_NAME" in
-  bash|sh|zsh|[0-9]*|fd/*) SCRIPT_NAME="audit-scan-url.sh" ;;
+  bash|sh|zsh|[0-9]*|fd/*) SCRIPT_NAME="vfa-audit-scan.sh" ;;
 esac
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 OUTPUT_DIR=""  # default set in parse_args after PROJECT_PATH is known
 SEVERITY="MEDIUM"          # LOW | MEDIUM | HIGH | CRITICAL
-FAIL_ON_FINDINGS=false
 SKIP_SECRETS=false
 SKIP_CVE=false
 SKIP_LICENSE=false
@@ -97,15 +98,14 @@ ${BLD}OPTIONS${NC}
       --skip-cve           Skip CVE scan (Trivy + Grype)
       --skip-license       Skip license scan
       --no-git-history     Scan files only, skip git commit history (Gitleaks)
-      --fail-on-findings   Exit 1 when any findings exist (useful for CI)
   -v, --verbose            Show full raw scanner output
   -h, --help               Show this help
 
 ${BLD}EXAMPLES${NC}
   ${SCRIPT_NAME} /path/to/project
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh| bash
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh| bash -s -- --severity HIGH --fail-on-findings
-  ${SCRIPT_NAME} --severity HIGH --fail-on-findings ~/projects/api
+  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh | bash -s -- --severity HIGH
+  ${SCRIPT_NAME} --severity HIGH ~/projects/api
   ${SCRIPT_NAME} --skip-license --verbose /opt/app
   ${SCRIPT_NAME} --no-git-history -o /tmp/audit-out /path/to/project
 
@@ -119,7 +119,7 @@ ${BLD}OUTPUT${NC}
     trivy-license.json     License findings (JSON)
     trivy-license.txt      License findings (table)
     summary.txt            Human-readable summary
-    summary.json           Machine-readable summary (CI integration)
+    summary.json           Machine-readable summary
 EOF
 }
 
@@ -134,7 +134,6 @@ parse_args() {
       --skip-cve)           SKIP_CVE=true;          shift   ;;
       --skip-license)       SKIP_LICENSE=true;      shift   ;;
       --no-git-history)     NO_GIT_HISTORY=true;    shift   ;;
-      --fail-on-findings)   FAIL_ON_FINDINGS=true;  shift   ;;
       --install)            AUTO_INSTALL=true;      shift   ;;
       -v|--verbose)         VERBOSE=true;           shift   ;;
       -h|--help)            usage; exit 0           ;;
@@ -478,10 +477,6 @@ main() {
     warn "zip failed — report kept at: ${OUTPUT_DIR}"
   fi
 
-  local total=$((SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT))
-  if [[ "$FAIL_ON_FINDINGS" == true && $total -gt 0 ]]; then
-    exit 1
-  fi
   exit 0
 }
 
