@@ -5,7 +5,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 | Lớp | Tool | Phát hiện |
 |-----|------|-----------|
 | **Secrets** | [Gitleaks](https://github.com/gitleaks/gitleaks) | API keys, tokens, credentials trong code và git history |
-| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) | Lỗ hổng đã biết trong dependencies (cross-check 2 database) |
+| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) + GitHub Advisory | Lỗ hổng đã biết trong dependencies, gồm advisory mới/chưa reviewed để review thủ công |
 | **License** | [Trivy](https://github.com/aquasecurity/trivy) + [ExifTool](https://exiftool.org/) | License thư viện và metadata bản quyền/license của font |
 
 ---
@@ -46,8 +46,8 @@ chmod +x audit-scan.sh
 
 | Option | Mặc định | Mô tả |
 |--------|----------|-------|
-| `-o, --output <dir>` | `./reports/<timestamp>_<project>` | Thư mục lưu báo cáo (trước khi zip) |
-| `-s, --severity <level>` | `MEDIUM` | Mức độ tối thiểu: `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` |
+| `-o, --output <dir>` | `./vfa_audit_output/<timestamp>_<project>` | Thư mục lưu báo cáo (trước khi zip) |
+| `-s, --severity <level>` | `LOW` | Mức độ tối thiểu: `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` |
 | `--skip-secrets` | — | Bỏ qua scan secrets (Gitleaks) |
 | `--skip-cve` | — | Bỏ qua scan CVE (Trivy + Grype) |
 | `--skip-license` | — | Bỏ qua scan license |
@@ -88,17 +88,19 @@ chmod +x audit-scan.sh
 
 ## Output
 
-Mỗi lần chạy tạo một file zip tại `reports/<timestamp>_<project-name>.zip`.  
+Mỗi lần chạy tạo một file zip tại `vfa_audit_output/<timestamp>_<project-name>.zip`.  
 Tên thư mục lấy từ **tên folder gốc của project** được chỉ định.
 
 ```
-reports/
+vfa_audit_output/
 └── 20250609_143022_my-project.zip
     ├── gitleaks.json        # Secrets findings (Gitleaks — JSON)
     ├── trivy-vuln.json      # CVE findings (Trivy — JSON)
     ├── trivy-vuln.txt       # CVE findings (Trivy — table)
     ├── grype.json           # CVE findings (Grype — JSON)
     ├── grype.txt            # CVE findings (Grype — table)
+    ├── fresh-advisory.json  # CVE mới từ GitHub Advisory
+    ├── fresh-advisory.txt   # CVE mới dạng text
     ├── trivy-license.json   # License findings (Trivy — JSON)
     ├── trivy-license.txt    # License findings (Trivy — table)
     ├── font-license-exiftool.json # Font metadata (ExifTool — JSON)
@@ -126,9 +128,10 @@ reports/
 | Secrets (Gitleaks) | 2 |
 | CVE (Trivy) | 14 |
 | CVE (Grype) | 11 |
+| Fresh CVE (GitHub Advisory) | 1 |
 | License (Trivy) | 3 |
 | Font License (ExifTool) | 2 |
-| **Total** | **32** |
+| **Total** | **33** |
 ```
 
 ### Ví dụ summary.json
@@ -142,13 +145,14 @@ reports/
     "secrets":        2,
     "cve_trivy":      14,
     "cve_grype":      11,
+    "fresh_advisories": 1,
     "license_issues": 3,
     "font_files":     8,
     "font_license_issues": 2,
-    "total":          32
+    "total":          33
   },
   "tool_errors": 0,
-  "output_dir":  "/path/to/reports/20250609_143022_my-project"
+  "output_dir":  "/path/to/vfa_audit_output/20250609_143022_my-project"
 }
 ```
 
@@ -163,6 +167,9 @@ reports/
 ### Về CVE Scan (Trivy + Grype)
 
 - Trivy và Grype dùng **database khác nhau** (Trivy: GHSA + NVD, Grype: tổng hợp nhiều nguồn). Chạy song song giúp tăng độ phủ.
+- Script kiểm tra thêm GitHub Advisory cho dependency Python được pin bằng `==` trong `requirements*.txt`; lớp này giúp note các advisory mới/chưa reviewed để review thủ công.
+- GitHub Advisory `reviewed` được match bằng `ecosystem=pip` + `affects=package@version`.
+- GitHub Advisory `unreviewed` chưa có package/version range đáng tin, nên script tìm theo tên package trên GitHub Advisory và ghi rõ `unreviewed` trong report để bạn kiểm tra thủ công.
 - Chỉ phát hiện CVE trong dependencies khai báo qua package manager (npm, pip, maven, gradle, go.mod, cargo…).
 - CVE trong code tự viết không được phát hiện — cần SAST tool riêng (ví dụ: Semgrep, CodeQL).
 

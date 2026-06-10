@@ -14,6 +14,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'
 BLU='\033[0;34m'; CYN='\033[0;36m'; BLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -33,7 +35,7 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 OUTPUT_DIR=""  # default set in parse_args after PROJECT_PATH is known
-SEVERITY="MEDIUM"          # LOW | MEDIUM | HIGH | CRITICAL
+SEVERITY="LOW"             # LOW | MEDIUM | HIGH | CRITICAL
 SKIP_SECRETS=false
 SKIP_CVE=false
 SKIP_LICENSE=false
@@ -46,6 +48,7 @@ PROJECT_PATH=""
 SECRET_COUNT=0
 TRIVY_CVE_COUNT=0
 GRYPE_CVE_COUNT=0
+FRESH_ADVISORY_COUNT=0
 LICENSE_ISSUE_COUNT=0
 FONT_FILE_COUNT=0
 FONT_LICENSE_ISSUE_COUNT=0
@@ -94,8 +97,8 @@ ${BLD}DESCRIPTION${NC}
   This makes it safe to run directly from a raw GitHub URL.
 
 ${BLD}OPTIONS${NC}
-  -o, --output <dir>       Report output directory  (default: ./reports/<ts>_<project>)
-  -s, --severity <level>   Minimum severity: LOW|MEDIUM|HIGH|CRITICAL (default: MEDIUM)
+  -o, --output <dir>       Report output directory  (default: ./vfa_audit_output/<ts>_<project>)
+  -s, --severity <level>   Minimum severity: LOW|MEDIUM|HIGH|CRITICAL (default: LOW)
       --skip-secrets       Skip Gitleaks scan
       --skip-cve           Skip CVE scan (Trivy + Grype)
       --skip-license       Skip license scan
@@ -112,12 +115,14 @@ ${BLD}EXAMPLES${NC}
   ${SCRIPT_NAME} --no-git-history -o /tmp/audit-out /path/to/project
 
 ${BLD}OUTPUT${NC}
-  reports/<timestamp>/
+  vfa_audit_output/<timestamp>/
     gitleaks.json          Secrets findings
     trivy-vuln.json        CVE findings (Trivy, JSON)
     trivy-vuln.txt         CVE findings (Trivy, table)
     grype.json             CVE findings (Grype, JSON)
     grype.txt              CVE findings (Grype, table)
+    fresh-advisory.json    Latest CVE/advisory findings (GitHub Advisory)
+    fresh-advisory.txt     Latest CVE/advisory findings (text)
     trivy-license.json     License findings (JSON)
     trivy-license.txt      License findings (table)
     font-license-exiftool.json
@@ -154,7 +159,7 @@ parse_args() {
 
   # Set default output dir now that PROJECT_PATH is resolved
   if [[ -z "$OUTPUT_DIR" ]]; then
-    OUTPUT_DIR="${RUN_DIR}/reports/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
+    OUTPUT_DIR="${RUN_DIR}/vfa_audit_output/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
   fi
 
   case "$SEVERITY" in
@@ -352,6 +357,253 @@ except Exception:
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+run_fresh_advisory_scan() {
+  section "2b/3  Fresh CVE  (GitHub Advisory)"
+  local out_json="${OUTPUT_DIR}/fresh-advisory.json"
+  local out_txt="${OUTPUT_DIR}/fresh-advisory.txt"
+  local trivy_json="${OUTPUT_DIR}/trivy-vuln.json"
+  local grype_json="${OUTPUT_DIR}/grype.json"
+
+  log "Checking latest Python advisories from GitHub Advisory..."
+
+  local count
+  if ! count="$(python3 - "$PROJECT_PATH" "$SEVERITY" "$out_json" "$out_txt" "$trivy_json" "$grype_json" <<'PY' 2>/dev/null
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+project, threshold, out_json, out_txt, trivy_json, grype_json = sys.argv[1:7]
+sev_rank = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+threshold_rank = sev_rank.get(threshold.upper(), 1)
+
+def fetch(url, accept="application/vnd.github+json"):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": accept,
+            "User-Agent": "vfa-audit-scan",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+def fetch_json(url):
+    return json.loads(fetch(url))
+
+def fetch_advisories(params):
+    q = urllib.parse.urlencode(params)
+    return fetch_json(f"https://api.github.com/advisories?{q}")
+
+def norm_name(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+def advisory_severity(item):
+    sev = (item.get("severity") or "").upper()
+    if sev in sev_rank:
+        return sev
+    metrics = item.get("cve", {}).get("metrics", {})
+    for key in ("cvssMetricV31", "cvssMetricV40", "cvssMetricV30"):
+        vals = metrics.get(key) or []
+        if vals:
+            return (vals[0].get("cvssData", {}).get("baseSeverity") or "UNKNOWN").upper()
+    return "UNKNOWN"
+
+def existing_ids():
+    ids = set()
+    try:
+        data = json.load(open(trivy_json, encoding="utf-8"))
+        for result in data.get("Results", []):
+            for vuln in result.get("Vulnerabilities") or []:
+                for key in ("VulnerabilityID", "PrimaryURL"):
+                    val = vuln.get(key)
+                    if val:
+                        ids.add(str(val).upper())
+    except Exception:
+        pass
+    try:
+        data = json.load(open(grype_json, encoding="utf-8"))
+        for match in data.get("matches", []):
+            vuln = match.get("vulnerability", {})
+            if vuln.get("id"):
+                ids.add(str(vuln["id"]).upper())
+            for rel in vuln.get("relatedVulnerabilities") or []:
+                if rel.get("id"):
+                    ids.add(str(rel["id"]).upper())
+    except Exception:
+        pass
+    return ids
+
+def pinned_requirements():
+    deps = {}
+    req_re = re.compile(r"^\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*==\s*([A-Za-z0-9_.!+*-]+)")
+    for root, dirs, files in os.walk(project):
+        dirs[:] = [d for d in dirs if d not in {".git", ".venv", "venv", "node_modules", "__pycache__"}]
+        for name in files:
+            if name == "requirements.txt" or (name.startswith("requirements") and name.endswith(".txt")):
+                path = os.path.join(root, name)
+                try:
+                    for line in open(path, encoding="utf-8", errors="ignore"):
+                        line = line.split("#", 1)[0].strip()
+                        m = req_re.match(line)
+                        if m:
+                            deps.setdefault(norm_name(m.group(1)), {
+                                "name": m.group(1),
+                                "version": m.group(2),
+                                "files": [],
+                            })["files"].append(path)
+                except Exception:
+                    pass
+    return deps
+
+seen = existing_ids()
+deps = pinned_requirements()
+findings = []
+
+def text_has_package_and_version(text, dep):
+    needle = norm_name(dep["name"])
+    normalized = norm_name(text)
+    has_name = re.search(r"(^|[^a-z0-9])" + re.escape(needle) + r"([^a-z0-9]|$)", normalized) is not None
+    if not has_name:
+        return False
+    version = dep["version"]
+    version_parts = re.findall(r"\d+", version)
+    hints = {version}
+    if len(version_parts) >= 2:
+        hints.add(".".join(version_parts[:2]))
+    return any(h in text for h in hints)
+
+def has_advisory_signal(adv, dep):
+    text = " ".join([
+        adv.get("summary") or "",
+        adv.get("description") or "",
+        adv.get("source_code_location") or "",
+        " ".join(adv.get("references") or []),
+    ])
+    return text_has_package_and_version(text, dep)
+
+def add_finding(dep, adv, matched_by, review_required):
+    sev = advisory_severity(adv)
+    primary = (adv.get("cve_id") or adv.get("ghsa_id") or "").upper()
+    ids = [i.get("value") for i in adv.get("identifiers", []) if i.get("value")]
+    all_ids = {primary, *(str(i).upper() for i in ids if i)}
+    if not primary or all_ids & seen or sev_rank.get(sev, 0) < threshold_rank:
+        return
+    findings.append({
+        "source": "GitHub Advisory",
+        "package": dep["name"],
+        "version": dep["version"],
+        "id": adv.get("cve_id") or adv.get("ghsa_id"),
+        "ghsa_id": adv.get("ghsa_id"),
+        "type": adv.get("type"),
+        "severity": sev,
+        "summary": adv.get("summary") or "",
+        "url": adv.get("html_url") or "",
+        "matched_by": matched_by,
+        "review_required": review_required,
+        "identifiers": ids,
+    })
+    seen.update(all_ids)
+
+def recent_advisory_pool(adv_type):
+    items = []
+    for page in range(1, 6):
+        try:
+            batch = fetch_advisories({
+                "ecosystem": "pip",
+                "type": adv_type,
+                "per_page": "100",
+                "page": str(page),
+                "sort": "published",
+                "direction": "desc",
+            })
+        except Exception:
+            break
+        if not batch:
+            break
+        items.extend(batch)
+    return items
+
+recent_by_type = {
+    "reviewed": [],
+    "malware": recent_advisory_pool("malware"),
+    "unreviewed": recent_advisory_pool("unreviewed"),
+}
+
+for dep in deps.values():
+    name = dep["name"]
+    version = dep["version"]
+
+    for adv_type in ("reviewed", "malware", "unreviewed"):
+        # The REST API supports all three advisory types. `affects` is the
+        # strongest match; recent text matching is a fallback for unreviewed
+        # and malware advisories whose package/version metadata may lag.
+        try:
+            for adv in fetch_advisories({
+                "ecosystem": "pip",
+                "affects": f"{name}@{version}",
+                "type": adv_type,
+                "per_page": "100",
+            }):
+                add_finding(
+                    dep,
+                    adv,
+                    f"github_{adv_type}_affects",
+                    adv_type != "reviewed",
+                )
+        except Exception:
+            pass
+
+        if adv_type == "reviewed":
+            continue
+        for adv in recent_by_type[adv_type]:
+            if has_advisory_signal(adv, dep):
+                add_finding(
+                    dep,
+                    adv,
+                    f"github_{adv_type}_recent_text",
+                    True,
+                )
+
+with open(out_json, "w", encoding="utf-8") as f:
+    json.dump({"findings": findings}, f, ensure_ascii=False, indent=2)
+
+with open(out_txt, "w", encoding="utf-8") as f:
+    f.write("Fresh CVE Advisory Review (GitHub Advisory)\n")
+    f.write("=" * 80 + "\n")
+    f.write(f"Findings: {len(findings)}\n\n")
+    for row in findings:
+        f.write(f"[{row['severity']}] {row['id']} {row['package']}=={row['version']}\n")
+        if row.get("ghsa_id"):
+            f.write(f"  GHSA:      {row['ghsa_id']}\n")
+        f.write(f"  Type:      {row.get('type') or '-'}\n")
+        f.write(f"  Source:    {row['source']} ({row['matched_by']})\n")
+        if row.get("review_required"):
+            f.write("  Note:      advisory requires manual verification of affected package/version\n")
+        f.write(f"  Summary:   {row['summary']}\n")
+        f.write(f"  URL:       {row['url']}\n\n")
+
+print(len(findings))
+PY
+)"; then
+    count="0"
+    TOOL_ERRORS=$((TOOL_ERRORS+1))
+    warn "Fresh advisory lookup failed; continuing without GitHub Advisory supplemental findings"
+  fi
+
+  FRESH_ADVISORY_COUNT="${count:-0}"
+  if [[ "$FRESH_ADVISORY_COUNT" -eq 0 ]]; then
+    ok "No supplemental fresh CVEs found"
+  else
+    warn "${FRESH_ADVISORY_COUNT} supplemental fresh CVE(s) found  →  ${out_txt}"
+    [[ "$VERBOSE" == true && -f "$out_txt" ]] && cat "$out_txt"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 run_license_scan() {
   section "3a/3  License  (Trivy)"
   local lj="${OUTPUT_DIR}/trivy-license.json"
@@ -516,7 +768,7 @@ PY
 # ─────────────────────────────────────────────────────────────────────────────
 generate_summary() {
   section "Audit Summary"
-  local total=$((SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
+  local total=$((SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + FRESH_ADVISORY_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
   local stxt="${OUTPUT_DIR}/summary.md"
   local sjson="${OUTPUT_DIR}/summary.json"
   local status="WARN"
@@ -537,6 +789,7 @@ generate_summary() {
     printf '| Secrets (Gitleaks) | %d |\n' "$SECRET_COUNT"
     printf '| CVE (Trivy) | %d |\n' "$TRIVY_CVE_COUNT"
     printf '| CVE (Grype) | %d |\n' "$GRYPE_CVE_COUNT"
+    printf '| Fresh CVE (GitHub Advisory) | %d |\n' "$FRESH_ADVISORY_COUNT"
     printf '| License (Trivy) | %d |\n' "$LICENSE_ISSUE_COUNT"
     printf '| Font License (ExifTool) | %d |\n' "$FONT_LICENSE_ISSUE_COUNT"
     printf '| **Total** | **%d** |\n' "$total"
@@ -554,6 +807,7 @@ generate_summary() {
     "secrets":        ${SECRET_COUNT},
     "cve_trivy":      ${TRIVY_CVE_COUNT},
     "cve_grype":      ${GRYPE_CVE_COUNT},
+    "fresh_advisories": ${FRESH_ADVISORY_COUNT},
     "license_issues": ${LICENSE_ISSUE_COUNT},
     "font_files":     ${FONT_FILE_COUNT},
     "font_license_issues": ${FONT_LICENSE_ISSUE_COUNT},
@@ -589,7 +843,10 @@ main() {
   check_tools
 
   [[ "$SKIP_SECRETS" != true ]] && run_secrets_scan
-  [[ "$SKIP_CVE"     != true ]] && run_cve_scan
+  if [[ "$SKIP_CVE" != true ]]; then
+    run_cve_scan
+    run_fresh_advisory_scan
+  fi
   if [[ "$SKIP_LICENSE" != true ]]; then
     run_license_scan
     run_font_license_scan
