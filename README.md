@@ -5,7 +5,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 | Lớp | Tool | Phát hiện |
 |-----|------|-----------|
 | **Secrets** | [Gitleaks](https://github.com/gitleaks/gitleaks) + [Trivy](https://github.com/aquasecurity/trivy) | API keys, tokens, credentials trong code và git history |
-| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) | Lỗ hổng đã biết trong dependencies |
+| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) | Lỗ hổng đã biết trong dependencies |
 | **License** | [Trivy](https://github.com/aquasecurity/trivy) + [ExifTool](https://exiftool.org/) | License thư viện và metadata bản quyền/license của font |
 
 ---
@@ -30,7 +30,6 @@ macOS với [Homebrew](https://brew.sh/).
 | `jq` | `brew install jq` |
 | `gitleaks` | `brew install gitleaks` |
 | `trivy` | `brew install trivy` |
-| `grype` | `brew install grype` |
 | `exiftool` | `brew install exiftool` |
 
 > **Tự động cài:** Script tự phát hiện tools còn thiếu và cài tự động qua Homebrew — không cần cài tay trước.
@@ -67,7 +66,6 @@ Folder tạm trong `/tmp/vfa_audit/` bị xoá sau khi nén xong.
     ├── gitleaks.json               # Secrets findings (Gitleaks)
     ├── gitleaks-config.toml        # Config Gitleaks dùng cho lần scan này
     ├── trivy.json                  # Vuln + secret + license findings (Trivy)
-    ├── grype.json                  # CVE findings (Grype)
     ├── font-license-exiftool.json  # Font license/copyright metadata (ExifTool)
     ├── summary.txt                 # Bảng tổng hợp dạng text
     ├── summary.json                # Tổng hợp dạng JSON (machine-readable)
@@ -91,11 +89,10 @@ Folder tạm trong `/tmp/vfa_audit/` bị xoá sau khi nén xong.
 │ Secrets (Gitleaks)          │ findings   │        2 │
 │ Secrets (Trivy)             │ ok         │        0 │
 │ CVE (Trivy)                 │ findings   │       14 │
-│ CVE (Grype)                 │ findings   │       11 │
 │ License (Trivy)             │ findings   │        3 │
 │ Font License (ExifTool)     │ findings   │        2 │
 ├─────────────────────────────┼────────────┼──────────┤
-│ TOTAL                       │            │       32 │
+│ TOTAL                       │            │       21 │
 └─────────────────────────────┴────────────┴──────────┘
 ```
 
@@ -112,10 +109,9 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
   "scanners": {
     "secrets_gitleaks": {"status": "findings", "findings": 2},
     "trivy": {"status": "findings", "cve": 14, "secrets": 0, "license_issues": 3},
-    "cve_grype": {"status": "findings", "findings": 11},
     "font_license": {"status": "findings", "files": 8, "issues": 2}
   },
-  "total_findings": 32,
+  "total_findings": 21,
   "tool_errors": 0,
   "output_dir": "/tmp/vfa_audit/20250609_143022_my-project"
 }
@@ -131,9 +127,8 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 - Trivy chạy thêm secret scanner như một lớp đối chiếu thứ hai (cột `Secrets (Trivy)` trong summary).
 - Kết quả có thể có false positive — nên review thủ công trước khi xử lý.
 
-### Về CVE Scan (Trivy + Grype)
+### Về CVE Scan (Trivy)
 
-- Trivy và Grype dùng **database khác nhau** (Trivy: GHSA + NVD, Grype: tổng hợp nhiều nguồn). Chạy song song giúp tăng độ phủ.
 - Chỉ phát hiện CVE trong dependencies khai báo qua package manager (npm, pip, maven, gradle, go.mod, cargo…).
 - CVE trong code tự viết không được phát hiện — cần SAST tool riêng (ví dụ: Semgrep, CodeQL).
 
@@ -164,7 +159,6 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 | Tool cài tự động thất bại | `Failed to install <tool>` + layer tương ứng báo `<tool> unavailable — scan NOT performed` |
 | Gitleaks lỗi (exit > 1) | `Gitleaks failed (exit N) — see gitleaks.log` |
 | Trivy lỗi (DB download, crash…) | `Trivy failed (exit N) — see trivy.log` |
-| Grype lỗi | `Grype failed (exit N) — see grype.log` |
 | ExifTool lỗi đọc file | `ExifTool failed (exit N) — see exiftool.log` (lỗi lẻ tẻ nhưng vẫn có data → chỉ `[WARN]`) |
 | `summary.json` không sinh được | `[WARN]` (summary.txt vẫn dùng được) |
 | `zip` thiếu / nén lỗi | `[WARN]` — giữ nguyên folder báo cáo |
