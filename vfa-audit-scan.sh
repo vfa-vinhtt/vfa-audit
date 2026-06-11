@@ -40,6 +40,7 @@ PROJECT_PATH=""
 SECRET_COUNT=0
 TRIVY_SECRET_COUNT=0
 TRIVY_CVE_COUNT=0
+TRIVY_MISCONFIG_COUNT=0
 LICENSE_ISSUE_COUNT=0
 FONT_FILE_COUNT=0
 FONT_LICENSE_ISSUE_COUNT=0
@@ -138,25 +139,10 @@ run_secrets_scan() {
     no_git_history=true
   fi
 
-  # Inline config: extend default rules + ignore .env files
-  local GITLEAKS_CONFIG_TOML
-  GITLEAKS_CONFIG_TOML="$(cat <<'TOML'
-[extend]
-  useDefault = true
-
-[allowlist]
-  description = "ignore .env files"
-  paths = ['''^\.env$''', '''^\.env\..*''']
-TOML
-)"
-  local gl_config="${OUTPUT_DIR}/gitleaks-config.toml"
-  printf '%s\n' "$GITLEAKS_CONFIG_TOML" > "$gl_config"
-
   local -a flags
   if [[ "$no_git_history" == true ]] && gitleaks dir --help &>/dev/null; then
     # gitleaks 8.19+: `dir` replaces the deprecated `detect --no-git`
     flags=(dir "$PROJECT_PATH"
-      --config      "$gl_config"
       --report-path "$out"
       --report-format json
       --no-banner
@@ -165,7 +151,6 @@ TOML
   else
     flags=(detect
       --source      "$PROJECT_PATH"
-      --config      "$gl_config"
       --report-path "$out"
       --report-format json
       --no-banner
@@ -202,21 +187,21 @@ TOML
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Single full Trivy pass: vuln + secret + license.
+# Single full Trivy pass: vuln + secret + license + misconfig.
 run_trivy_scan() {
-  section "2/3  Trivy  (vuln, secret, license)"
+  section "2/3  Trivy  (vuln, secret, license, misconfig)"
   local tj="${OUTPUT_DIR}/trivy.json"
   local scan_log="${OUTPUT_DIR}/trivy.log"
 
   if tool_failed trivy || ! cmd_ok trivy; then
     TRIVY_STATUS="failed"
-    err "trivy unavailable — vuln/secret/license scan NOT performed"
+    err "trivy unavailable — vuln/secret/license/misconfig scan NOT performed"
     return
   fi
 
-  log "Trivy: scanning vuln, secret, license..."
+  log "Trivy: scanning vuln, secret, license, misconfig..."
   local rc=0
-  trivy fs --scanners vuln,secret,license --license-full --quiet \
+  trivy fs --scanners vuln,secret,license,misconfig --license-full --quiet \
     --format json --output "$tj" "$PROJECT_PATH" 2>"$scan_log" || rc=$?
 
   if [[ $rc -ne 0 || ! -f "$tj" ]]; then
@@ -230,12 +215,13 @@ run_trivy_scan() {
   if cmd_ok jq; then
     TRIVY_CVE_COUNT=$(jq '[.Results[]? | (.Vulnerabilities // []) | length] | add // 0' "$tj" 2>/dev/null || echo 0)
     TRIVY_SECRET_COUNT=$(jq '[.Results[]? | (.Secrets // []) | length] | add // 0' "$tj" 2>/dev/null || echo 0)
+    TRIVY_MISCONFIG_COUNT=$(jq '[.Results[]? | (.Misconfigurations // []) | length] | add // 0' "$tj" 2>/dev/null || echo 0)
     LICENSE_ISSUE_COUNT=$(jq '[.Results[]? | (.Licenses // [])[] | select(
       .Severity == "HIGH" or .Severity == "CRITICAL" or
       ((.Category // "") | ascii_downcase | test("restricted|reciprocal|unknown"))
     )] | length' "$tj" 2>/dev/null || echo 0)
   fi
-  for _v in TRIVY_CVE_COUNT TRIVY_SECRET_COUNT LICENSE_ISSUE_COUNT; do
+  for _v in TRIVY_CVE_COUNT TRIVY_SECRET_COUNT TRIVY_MISCONFIG_COUNT LICENSE_ISSUE_COUNT; do
     [[ "${!_v}" =~ ^[0-9]+$ ]] || printf -v "$_v" '%s' 0
   done
 
@@ -248,6 +234,11 @@ run_trivy_scan() {
     ok "Trivy secrets: none"
   else
     warn "Trivy secrets: ${TRIVY_SECRET_COUNT} found"
+  fi
+  if [[ "$TRIVY_MISCONFIG_COUNT" -eq 0 ]]; then
+    ok "Trivy misconfig: none"
+  else
+    warn "Trivy misconfig: ${TRIVY_MISCONFIG_COUNT} found"
   fi
   if [[ "$LICENSE_ISSUE_COUNT" -eq 0 ]]; then
     ok "Trivy license: no flagged licenses"
@@ -264,7 +255,7 @@ run_trivy_scan() {
   log "${DIM}Note: Trivy reads package-manager metadata. Standalone font files (.ttf/.woff)${NC}"
   log "${DIM}      not managed by a package registry are covered by the ExifTool layer.${NC}"
 
-  if [[ $((TRIVY_CVE_COUNT + TRIVY_SECRET_COUNT + LICENSE_ISSUE_COUNT)) -gt 0 ]]; then
+  if [[ $((TRIVY_CVE_COUNT + TRIVY_SECRET_COUNT + TRIVY_MISCONFIG_COUNT + LICENSE_ISSUE_COUNT)) -gt 0 ]]; then
     TRIVY_STATUS="findings"
   else
     TRIVY_STATUS="ok"
@@ -340,7 +331,7 @@ run_font_license_scan() {
 # ─────────────────────────────────────────────────────────────────────────────
 generate_summary() {
   section "Audit Summary"
-  local total=$((SECRET_COUNT + TRIVY_SECRET_COUNT + TRIVY_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
+  local total=$((SECRET_COUNT + TRIVY_SECRET_COUNT + TRIVY_CVE_COUNT + TRIVY_MISCONFIG_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
   local stxt="${OUTPUT_DIR}/summary.txt"
   local sjson="${OUTPUT_DIR}/summary.json"
 
@@ -367,7 +358,8 @@ generate_summary() {
     printf '├─────────────────────────────┼────────────┼──────────┤\n'
     printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Gitleaks)"      "$SECRETS_STATUS"                          "$SECRET_COUNT"
     printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Trivy)"         "$(_trivy_row "$TRIVY_SECRET_COUNT")"      "$TRIVY_SECRET_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Trivy)"             "$(_trivy_row "$TRIVY_CVE_COUNT")"         "$TRIVY_CVE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Trivy)"             "$(_trivy_row "$TRIVY_CVE_COUNT")"          "$TRIVY_CVE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Misconfig (Trivy)"       "$(_trivy_row "$TRIVY_MISCONFIG_COUNT")"   "$TRIVY_MISCONFIG_COUNT"
     printf '│ %-27s │ %-10s │ %8d │\n' "License (Trivy)"         "$(_trivy_row "$LICENSE_ISSUE_COUNT")"     "$LICENSE_ISSUE_COUNT"
     printf '│ %-27s │ %-10s │ %8d │\n' "Font License (ExifTool)" "$FONT_STATUS"                             "$FONT_LICENSE_ISSUE_COUNT"
     printf '├─────────────────────────────┼────────────┼──────────┤\n'
@@ -389,9 +381,10 @@ generate_summary() {
       --arg  secrets_status   "$SECRETS_STATUS" \
       --argjson secrets_count "$SECRET_COUNT" \
       --arg  trivy_status     "$TRIVY_STATUS" \
-      --argjson trivy_cve     "$TRIVY_CVE_COUNT" \
-      --argjson trivy_secrets "$TRIVY_SECRET_COUNT" \
-      --argjson trivy_license "$LICENSE_ISSUE_COUNT" \
+      --argjson trivy_cve        "$TRIVY_CVE_COUNT" \
+      --argjson trivy_secrets    "$TRIVY_SECRET_COUNT" \
+      --argjson trivy_misconfig  "$TRIVY_MISCONFIG_COUNT" \
+      --argjson trivy_license    "$LICENSE_ISSUE_COUNT" \
       --arg  font_status      "$FONT_STATUS" \
       --argjson font_files    "$FONT_FILE_COUNT" \
       --argjson font_issues   "$FONT_LICENSE_ISSUE_COUNT" \
@@ -399,7 +392,7 @@ generate_summary() {
         timestamp: $timestamp, project: $project, status: $status,
         scanners: {
           secrets_gitleaks: {status: $secrets_status, findings: $secrets_count},
-          trivy: {status: $trivy_status, cve: $trivy_cve, secrets: $trivy_secrets, license_issues: $trivy_license},
+          trivy: {status: $trivy_status, cve: $trivy_cve, secrets: $trivy_secrets, misconfig: $trivy_misconfig, license_issues: $trivy_license},
           font_license: {status: $font_status, files: $font_files, issues: $font_issues}
         },
         total_findings: $total, tool_errors: $tool_errors, output_dir: $outdir

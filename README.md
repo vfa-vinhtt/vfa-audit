@@ -6,6 +6,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 |-----|------|-----------|
 | **Secrets** | [Gitleaks](https://github.com/gitleaks/gitleaks) + [Trivy](https://github.com/aquasecurity/trivy) | API keys, tokens, credentials trong code và git history |
 | **CVE** | [Trivy](https://github.com/aquasecurity/trivy) | Lỗ hổng đã biết trong dependencies |
+| **Misconfig** | [Trivy](https://github.com/aquasecurity/trivy) | Cấu hình sai (Dockerfile, Kubernetes, Terraform…) |
 | **License** | [Trivy](https://github.com/aquasecurity/trivy) + [ExifTool](https://exiftool.org/) | License thư viện và metadata bản quyền/license của font |
 
 ---
@@ -64,7 +65,6 @@ Folder tạm trong `/tmp/vfa_audit/` bị xoá sau khi nén xong.
 <thư-mục-hiện-tại>/
 └── 20250609_143022_my-project.zip
     ├── gitleaks.json               # Secrets findings (Gitleaks)
-    ├── gitleaks-config.toml        # Config Gitleaks dùng cho lần scan này
     ├── trivy.json                  # Vuln + secret + license findings (Trivy)
     ├── font-license-exiftool.json  # Font license/copyright metadata (ExifTool)
     ├── summary.txt                 # Bảng tổng hợp dạng text
@@ -89,10 +89,11 @@ Folder tạm trong `/tmp/vfa_audit/` bị xoá sau khi nén xong.
 │ Secrets (Gitleaks)          │ findings   │        2 │
 │ Secrets (Trivy)             │ ok         │        0 │
 │ CVE (Trivy)                 │ findings   │       14 │
+│ Misconfig (Trivy)           │ findings   │        5 │
 │ License (Trivy)             │ findings   │        3 │
 │ Font License (ExifTool)     │ findings   │        2 │
 ├─────────────────────────────┼────────────┼──────────┤
-│ TOTAL                       │            │       21 │
+│ TOTAL                       │            │       26 │
 └─────────────────────────────┴────────────┴──────────┘
 ```
 
@@ -108,10 +109,10 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
   "status": "WARN",
   "scanners": {
     "secrets_gitleaks": {"status": "findings", "findings": 2},
-    "trivy": {"status": "findings", "cve": 14, "secrets": 0, "license_issues": 3},
+    "trivy": {"status": "findings", "cve": 14, "secrets": 0, "misconfig": 5, "license_issues": 3},
     "font_license": {"status": "findings", "files": 8, "issues": 2}
   },
-  "total_findings": 21,
+  "total_findings": 26,
   "tool_errors": 0,
   "output_dir": "/tmp/vfa_audit/20250609_143022_my-project"
 }
@@ -127,10 +128,11 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 - Trivy chạy thêm secret scanner như một lớp đối chiếu thứ hai (cột `Secrets (Trivy)` trong summary).
 - Kết quả có thể có false positive — nên review thủ công trước khi xử lý.
 
-### Về CVE Scan (Trivy)
+### Về CVE & Misconfig Scan (Trivy)
 
 - Chỉ phát hiện CVE trong dependencies khai báo qua package manager (npm, pip, maven, gradle, go.mod, cargo…).
 - CVE trong code tự viết không được phát hiện — cần SAST tool riêng (ví dụ: Semgrep, CodeQL).
+- Misconfig scan kiểm tra các file cấu hình phổ biến: Dockerfile, Kubernetes manifests, Terraform, Helm… theo best practice của CIS/NIST.
 
 ### Về License Scan (Trivy)
 
