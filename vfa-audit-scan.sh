@@ -250,7 +250,13 @@ run_secrets_scan() {
   fi
 
   local no_git_history=false
-  if [[ ! -d "${PROJECT_PATH}/.git" ]]; then
+  if [[ "$PROJECT_PATH" != "$RUN_DIR" ]]; then
+    # Scanning a different directory: skip git history to avoid gitleaks
+    # resolving git context from the current working directory instead of
+    # the target project.
+    no_git_history=true
+    log "Project path differs from working directory — scanning files only (git history skipped)"
+  elif [[ ! -d "${PROJECT_PATH}/.git" ]]; then
     no "No git in project"
     log "Scanning files only (no git history available)"
     no_git_history=true

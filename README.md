@@ -45,6 +45,8 @@ chmod +x vfa-audit-scan.sh
 
 Nếu bỏ qua `project-path`, script quét **thư mục hiện tại**.
 
+> **Khuyến nghị:** Để Gitleaks quét được toàn bộ git history, hãy **`cd` vào thư mục gốc của project cần audit** trước khi chạy, hoặc truyền đường dẫn tuyệt đối qua `project-path`. Gitleaks cần truy cập thư mục `.git` — nếu không tìm thấy, script tự chuyển sang quét file hiện tại và bỏ qua lịch sử commit.
+
 ### Chạy trực tiếp từ GitHub (không cần clone)
 
 ```bash
@@ -55,6 +57,8 @@ curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- --severity HIGH
 
 # Chỉ định project khác thư mục hiện tại
+# ⚠️  Gitleaks sẽ CHỈ quét file hiện tại, KHÔNG quét git history.
+#     Để quét đầy đủ cả history: cd vào project rồi chạy lệnh đầu tiên ở trên.
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- /path/to/project
 ```
 
@@ -165,6 +169,7 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 ### Về Secret Scan (Gitleaks)
 
 - Mặc định Gitleaks **quét toàn bộ git history**, không chỉ code hiện tại. Secrets đã xóa khỏi code nhưng còn trong commit cũ vẫn bị phát hiện.
+- Nếu truyền `project-path` khác thư mục hiện tại, script **tự động bỏ qua git history** để tránh Gitleaks resolve git context từ thư mục đang đứng thay vì project mục tiêu — chỉ quét file hiện tại.
 - Nếu project **không phải git repo**, script in `[ NO ] No git in project` và tự chuyển sang quét file hiện tại (không bỏ qua âm thầm).
 - Trivy chạy thêm secret scanner như một lớp đối chiếu thứ hai (cột `Secrets (Trivy)` trong summary).
 - Kết quả có thể có false positive — nên review thủ công trước khi xử lý.
