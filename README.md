@@ -12,16 +12,17 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 
 ## Yêu cầu
 
+macOS với [Homebrew](https://brew.sh/).
+
 | Tool | Cài đặt thủ công |
 |------|-----------------|
+| `jq` | `brew install jq` |
 | `gitleaks` | `brew install gitleaks` |
 | `trivy` | `brew install trivy` |
 | `grype` | `brew install grype` |
 | `exiftool` | `brew install exiftool` |
 
-> **Tự động cài:** Script tự phát hiện tools còn thiếu và cài qua Homebrew (macOS) hoặc official install scripts / package manager (Linux) — không cần cài tay trước.
->
-> **Optional:** `jq` (đếm findings trong summary). Thiếu `jq` → counts hiển thị 0, raw JSON reports vẫn đầy đủ.
+> **Tự động cài:** Script tự phát hiện tools còn thiếu và cài tự động qua Homebrew — không cần cài tay trước.
 
 ---
 
@@ -48,11 +49,14 @@ Nếu bỏ qua `project-path`, script quét **thư mục hiện tại**.
 > **Khuyến nghị:** Để Gitleaks quét được toàn bộ git history, hãy **`cd` vào thư mục gốc của project cần audit** trước khi chạy, hoặc truyền đường dẫn tuyệt đối qua `project-path`. Gitleaks cần truy cập thư mục `.git` — nếu không tìm thấy, script tự chuyển sang quét file hiện tại và bỏ qua lịch sử commit.
 
 ### Chạy trực tiếp từ GitHub (không cần clone)
-
+#### Khuyến nghị:
 ```bash
 # Quét thư mục hiện tại
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash
+```
 
+#### Tuỳ chọn:
+```bash
 # Truyền options qua `bash -s --`
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- --severity HIGH
 
@@ -61,6 +65,8 @@ curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit
 #     Để quét đầy đủ cả history: cd vào project rồi chạy lệnh đầu tiên ở trên.
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- /path/to/project
 ```
+
+> **Lưu ý:** Chạy qua `curl | bash` sẽ tự động cài tools còn thiếu qua Homebrew. Cần có Homebrew đã cài sẵn trên máy.
 
 ### Options
 

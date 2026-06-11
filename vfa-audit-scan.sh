@@ -167,40 +167,7 @@ parse_args() {
 install_tool() {
   local tool="$1"
   log "Installing ${tool}..."
-
-  if cmd_ok brew; then
-    brew install "$tool" && return 0 || return 1
-  fi
-
-  # Linux fallback — official install scripts
-  case "$tool" in
-    trivy)
-      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-        | sudo sh -s -- -b /usr/local/bin && return 0 ;;
-    grype)
-      curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-        | sudo sh -s -- -b /usr/local/bin && return 0 ;;
-    exiftool)
-      if cmd_ok apt-get; then
-        sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl && return 0
-      fi
-      if cmd_ok apk; then
-        sudo apk add --no-cache exiftool && return 0
-      fi
-      if cmd_ok yum; then
-        sudo yum install -y perl-Image-ExifTool && return 0
-      fi ;;
-    gitleaks)
-      local tag ver arch
-      tag=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
-            | grep '"tag_name"' | cut -d'"' -f4)
-      ver="${tag#v}"
-      arch=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')
-      curl -sSfL \
-        "https://github.com/gitleaks/gitleaks/releases/download/${tag}/gitleaks_${ver}_linux_${arch}.tar.gz" \
-        | sudo tar -xz -C /usr/local/bin gitleaks && return 0 ;;
-  esac
-  return 1
+  brew install "$tool" && return 0 || return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,7 +187,7 @@ check_tools() {
     fi
   }
 
-  cmd_ok jq || warn "jq not found — finding counts will show 0 (raw JSON reports are intact)"
+  _check jq "jq --version"
   [[ "$SKIP_SECRETS" != true ]] && _check gitleaks "gitleaks version"
   [[ "$SKIP_CVE" != true || "$SKIP_LICENSE" != true ]] && _check trivy "trivy version"
   [[ "$SKIP_CVE" != true ]] && _check grype "grype version"
