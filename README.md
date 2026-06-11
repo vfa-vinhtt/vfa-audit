@@ -5,7 +5,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 | Lớp | Tool | Phát hiện |
 |-----|------|-----------|
 | **Secrets** | [Gitleaks](https://github.com/gitleaks/gitleaks) + [Trivy](https://github.com/aquasecurity/trivy) | API keys, tokens, credentials trong code và git history |
-| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) + GitHub Advisory | Lỗ hổng đã biết trong dependencies, gồm advisory mới/chưa reviewed để review thủ công |
+| **CVE** | [Trivy](https://github.com/aquasecurity/trivy) + [Grype](https://github.com/anchore/grype) | Lỗ hổng đã biết trong dependencies |
 | **License** | [Trivy](https://github.com/aquasecurity/trivy) + [ExifTool](https://exiftool.org/) | License thư viện và metadata bản quyền/license của font |
 
 ---
@@ -21,7 +21,7 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 
 > **Tự động cài:** Script tự phát hiện tools còn thiếu và cài qua Homebrew (macOS) hoặc official install scripts / package manager (Linux) — không cần cài tay trước.
 >
-> **Optional:** `jq` (đếm findings trong summary) và `python3` (lớp GitHub Advisory). Thiếu `jq` → counts hiển thị 0, raw JSON reports vẫn đầy đủ. Thiếu `python3` → GitHub Advisory bị skip, 3 lớp còn lại chạy bình thường.
+> **Optional:** `jq` (đếm findings trong summary). Thiếu `jq` → counts hiển thị 0, raw JSON reports vẫn đầy đủ.
 
 ---
 
@@ -62,13 +62,10 @@ curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit
 
 | Option | Mặc định | Mô tả |
 |--------|----------|-------|
-| `-o, --output <dir>` | `./vfa_audit_output` | Thư mục **gốc** chứa báo cáo; báo cáo luôn nằm trong subfolder `<dir>/<timestamp>_<project>` do script tự tạo (chỉ subfolder này bị xóa sau khi zip, nội dung có sẵn trong `<dir>` không bị đụng tới) |
 | `-s, --severity <level>` | `UNKNOWN` | Mức độ tối thiểu: `UNKNOWN` / `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` — mặc định lấy toàn bộ |
 | `--skip-secrets` | — | Bỏ qua scan secrets (Gitleaks) |
-| `--skip-cve` | — | Bỏ qua scan CVE (Trivy vuln/secret + Grype + GitHub Advisory) |
+| `--skip-cve` | — | Bỏ qua scan CVE (Trivy vuln/secret + Grype) |
 | `--skip-license` | — | Bỏ qua scan license |
-| `--no-git-history` | — | Chỉ scan file hiện tại, bỏ qua git history |
-| `--no-install` | — | Không tự cài tools còn thiếu — báo lỗi và dừng |
 | `-v, --verbose` | — | Hiện toàn bộ output của từng tool |
 | `-h, --help` | — | Hiển thị hướng dẫn |
 
@@ -91,30 +88,24 @@ curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit
 ./vfa-audit-scan.sh --skip-secrets --skip-license /path/to/project
 ```
 
-**Scan files hiện tại, không đào git history:**
+**Xem full output của từng tool:**
 ```bash
-./vfa-audit-scan.sh --no-git-history /path/to/project
-```
-
-**Lưu báo cáo ra thư mục riêng, xem full output:**
-```bash
-./vfa-audit-scan.sh -o /tmp/my-audit --verbose /path/to/project
+./vfa-audit-scan.sh --verbose /path/to/project
 ```
 
 ---
 
 ## Output
 
-Mỗi lần chạy tạo một file zip tại `vfa_audit_output/<timestamp>_<project-name>.zip`.  
+Mỗi lần chạy tạo một file zip tại `/tmp/vfa_audit/<timestamp>_<project-name>.zip`.  
 Tên thư mục lấy từ **tên folder gốc của project** được chỉ định.
 
 ```
-vfa_audit_output/
+/tmp/vfa_audit/
 └── 20250609_143022_my-project.zip
     ├── gitleaks.json               # Secrets findings (Gitleaks)
     ├── trivy.json                  # Vuln + secret + license findings (Trivy)
     ├── grype.json                  # CVE findings (Grype)
-    ├── fresh-advisory.json         # CVE mới từ GitHub Advisory (mọi ecosystem)
     ├── font-license-exiftool.json  # Font license/copyright metadata (ExifTool)
     ├── summary.md                  # Bảng tổng hợp Markdown
     ├── summary.json                # Tổng hợp dạng JSON (machine-readable)
@@ -142,10 +133,9 @@ vfa_audit_output/
 | Secrets (Trivy) | ok | 0 |
 | CVE (Trivy) | findings | 14 |
 | CVE (Grype) | findings | 11 |
-| Fresh CVE (GitHub Advisory) | findings | 1 |
 | License (Trivy) | findings | 3 |
 | Font License (ExifTool) | findings | 2 |
-| **Total** | | **33** |
+| **Total** | | **32** |
 ```
 
 Cột **Status** cho biết kết quả có tin được hay không: `ok` / `findings` (scanner chạy xong), `failed` (scanner lỗi — kết quả **không đầy đủ**, xem `logs/`), `skipped` (bị bỏ qua theo flag). Status tổng là `FAIL` khi có scanner lỗi, `WARN` khi có findings, `PASS` khi sạch.
@@ -162,12 +152,11 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
     "secrets_gitleaks": {"status": "findings", "findings": 2},
     "trivy": {"status": "findings", "cve": 14, "secrets": 0, "license_issues": 3},
     "cve_grype": {"status": "findings", "findings": 11},
-    "fresh_advisories": {"status": "findings", "findings": 1},
     "font_license": {"status": "findings", "files": 8, "issues": 2}
   },
-  "total_findings": 33,
+  "total_findings": 32,
   "tool_errors": 0,
-  "output_dir": "/path/to/vfa_audit_output/20250609_143022_my-project"
+  "output_dir": "/tmp/vfa_audit/20250609_143022_my-project"
 }
 ```
 
@@ -177,34 +166,12 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 
 - Mặc định Gitleaks **quét toàn bộ git history**, không chỉ code hiện tại. Secrets đã xóa khỏi code nhưng còn trong commit cũ vẫn bị phát hiện.
 - Nếu project **không phải git repo**, script in `[ NO ] No git in project` và tự chuyển sang quét file hiện tại (không bỏ qua âm thầm).
-- Dùng `--no-git-history` nếu chỉ muốn quét file hiện tại (nhanh hơn, ít false positive hơn).
 - Trivy chạy thêm secret scanner như một lớp đối chiếu thứ hai (cột `Secrets (Trivy)` trong summary).
 - Kết quả có thể có false positive — nên review thủ công trước khi xử lý.
 
 ### Về CVE Scan (Trivy + Grype)
 
 - Trivy và Grype dùng **database khác nhau** (Trivy: GHSA + NVD, Grype: tổng hợp nhiều nguồn). Chạy song song giúp tăng độ phủ.
-- Lớp GitHub Advisory quét **mọi ecosystem** mà GitHub hỗ trợ, đọc version đã pin từ manifest/lockfile:
-
-  | Ecosystem | File được đọc |
-  |---|---|
-  | pip | `requirements*.txt` (pin `==`), `Pipfile.lock`, `poetry.lock` |
-  | npm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` |
-  | go | `go.mod` |
-  | maven | `pom.xml` (bỏ qua version dạng `${property}`) |
-  | rubygems | `Gemfile.lock` |
-  | composer | `composer.lock` |
-  | rust | `Cargo.lock` |
-  | nuget | `packages.lock.json`, `*.csproj` |
-  | pub | `pubspec.lock` |
-  | swift | `Package.resolved` |
-  | actions | `.github/workflows/*.yml` (chỉ ref dạng version tag, bỏ qua SHA) |
-  | erlang | `mix.lock` |
-
-- Advisory được match bằng `affects=package@version` (batch nhiều package mỗi request để tiết kiệm rate limit), đủ 3 loại `reviewed` / `malware` / `unreviewed`.
-- Advisory `unreviewed`/`malware` chưa có package/version range đáng tin, nên script bổ sung text-match trên advisory mới nhất và ghi rõ trong report để bạn kiểm tra thủ công.
-- CVE đã có trong kết quả Trivy/Grype được tự động loại trùng — lớp này chỉ báo phần **bổ sung**.
-- Lớp GitHub Advisory gọi API **không dùng token** (chủ đích — giới hạn 60 request/giờ). Nếu chạm rate limit, scanner báo `failed` kèm kết quả partial thay vì lặng lẽ trả 0. Project có rất nhiều dependency (lockfile hàng nghìn package) có thể chạm limit — kết quả partial sẽ được ghi rõ trong report.
 - Chỉ phát hiện CVE trong dependencies khai báo qua package manager (npm, pip, maven, gradle, go.mod, cargo…).
 - CVE trong code tự viết không được phát hiện — cần SAST tool riêng (ví dụ: Semgrep, CodeQL).
 
@@ -233,28 +200,16 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 |---|---|
 | Không tạo được thư mục output | `Cannot create output directory: ...` → exit 2 |
 | Tool cài tự động thất bại | `Failed to install <tool>` + layer tương ứng báo `<tool> unavailable — scan NOT performed` |
-| Thiếu `python3` | `[NO] Skipped — python3 not available` → GitHub Advisory bị skip (không phải lỗi fatal) |
 | Gitleaks lỗi (exit > 1) | `Gitleaks failed (exit N) — see gitleaks.log` |
-| Report Gitleaks hỏng (JSON parse lỗi) | `Gitleaks report unreadable: ...` |
 | Trivy lỗi (DB download, crash…) | `Trivy failed (exit N) — see trivy.log` |
-| Report Trivy hỏng | `Trivy report unparsable: ...` |
-| Trivy table không sinh được | `[WARN]` (JSON vẫn nguyên vẹn, không tính là failed) |
 | Grype lỗi | `Grype failed (exit N) — see grype.log` |
-| Report Grype hỏng | `Grype report unparsable: ...` |
-| GitHub Advisory đụng rate limit | `rate limit reached (unauthenticated, 60 req/h) — results PARTIAL` |
-| GitHub Advisory mất mạng hoàn toàn | `API unreachable (network/DNS?) — NO advisory data` |
-| GitHub Advisory lỗi một phần request | `some API requests failed — results PARTIAL` |
-| GitHub Advisory crash | `check crashed (exit N) — see fresh-advisory.log` |
 | ExifTool lỗi đọc file | `ExifTool failed (exit N) — see exiftool.log` (lỗi lẻ tẻ nhưng vẫn có data → chỉ `[WARN]`) |
-| Report font không sinh được | `Font license report generation failed` |
 | `summary.json` không sinh được | `[WARN]` (summary.md vẫn dùng được) |
 | `zip` thiếu / nén lỗi | `[WARN]` — giữ nguyên folder báo cáo |
-
-File `fresh-advisory.json` ghi rõ `"partial": true`, số request thành công/thất bại và warning message — kết quả không bao giờ bị hiểu nhầm là "sạch".
 
 ## Exit Codes
 
 | Code | Ý nghĩa |
 |------|---------|
 | `0` | Script chạy xong, kể cả khi có findings (status thật nằm trong `summary.json`) |
-| `2` | Lỗi tham số, không tạo được thư mục output, hoặc không thể cài tools |
+| `2` | Lỗi tham số hoặc không tạo được thư mục output |

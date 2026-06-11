@@ -32,14 +32,11 @@ esac
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-OUTPUT_BASE=""             # -o: base dir; reports go to <base>/<ts>_<project>
 OUTPUT_DIR=""              # resolved in parse_args, always a folder this run creates
 SEVERITY="UNKNOWN"         # UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL
 SKIP_SECRETS=false
 SKIP_CVE=false
 SKIP_LICENSE=false
-NO_GIT_HISTORY=false       # Gitleaks: skip git history, scan files only
-AUTO_INSTALL=true
 VERBOSE=false
 PROJECT_PATH=""
 
@@ -109,15 +106,11 @@ ${BLD}DESCRIPTION${NC}
   This makes it safe to run directly from a raw GitHub URL.
 
 ${BLD}OPTIONS${NC}
-  -o, --output <dir>       Base output directory; reports are written to
-                           <dir>/<timestamp>_<project>  (default: ./vfa_audit_output)
   -s, --severity <level>   Minimum severity: UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL
                            (default: UNKNOWN — include everything)
       --skip-secrets       Skip Gitleaks scan
       --skip-cve           Skip CVE scan (Trivy vuln/secret + Grype)
       --skip-license       Skip license scan (Trivy license + ExifTool)
-      --no-git-history     Scan files only, skip git commit history (Gitleaks)
-      --no-install         Do not auto-install missing tools; exit instead
   -v, --verbose            Show full raw scanner output
   -h, --help               Show this help
 
@@ -127,10 +120,9 @@ ${BLD}EXAMPLES${NC}
   curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh | bash -s -- --severity HIGH
   ${SCRIPT_NAME} --severity HIGH ~/projects/api
   ${SCRIPT_NAME} --skip-license --verbose /opt/app
-  ${SCRIPT_NAME} --no-git-history -o /tmp/audit-out /path/to/project
 
 ${BLD}OUTPUT${NC}
-  <output-base>/<timestamp>_<project>.zip  (folder is zipped after the run)
+  /tmp/vfa_audit/<timestamp>_<project>.zip  (folder is zipped after the run)
     gitleaks.json               Secrets findings (Gitleaks)
     trivy.json                  Vuln + secret + license findings (Trivy)
     grype.json                  CVE findings (Grype)
@@ -147,13 +139,10 @@ parse_args() {
   [[ $# -eq 0 ]] && PROJECT_PATH="$RUN_DIR"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -o|--output)          OUTPUT_BASE="$2";       shift 2 ;;
       -s|--severity)        SEVERITY="$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]')"; shift 2 ;;
       --skip-secrets)       SKIP_SECRETS=true;      shift   ;;
       --skip-cve)           SKIP_CVE=true;          shift   ;;
       --skip-license)       SKIP_LICENSE=true;      shift   ;;
-      --no-git-history)     NO_GIT_HISTORY=true;    shift   ;;
-      --no-install)         AUTO_INSTALL=false;     shift   ;;
       -v|--verbose)         VERBOSE=true;           shift   ;;
       -h|--help)            usage; exit 0           ;;
       -*)                   err "Unknown option: $1"; usage; exit 2 ;;
@@ -165,9 +154,7 @@ parse_args() {
   [[ ! -d "$PROJECT_PATH" ]] && { err "Not a directory: $PROJECT_PATH"; exit 2; }
   PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
-  # Reports always go into a timestamped folder this run creates, so the
-  # archive step can safely delete it even when -o points at an existing dir.
-  OUTPUT_DIR="${OUTPUT_BASE:-${RUN_DIR}/vfa_audit_output}/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
+  OUTPUT_DIR="/tmp/vfa_audit/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
 
   case "$SEVERITY" in
     UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL) ;;
@@ -240,20 +227,13 @@ check_tools() {
   cmd_ok zip || warn "zip not found — report folder will not be archived"
 
   if [[ ${#missing[@]} -gt 0 ]]; then
-    if [[ "$AUTO_INSTALL" == true ]]; then
-      for t in "${missing[@]}"; do
-        if ! install_tool "$t"; then
-          err "Failed to install $t — its scan will be marked as failed"
-          TOOL_ERRORS=$((TOOL_ERRORS+1))
-          FAILED_TOOLS+="$t "
-        fi
-      done
-    else
-      err "Missing tools: ${missing[*]}"
-      log "Install:  brew install gitleaks trivy grype exiftool"
-      log "Or rerun without --no-install to auto-install."
-      exit 2
-    fi
+    for t in "${missing[@]}"; do
+      if ! install_tool "$t"; then
+        err "Failed to install $t — its scan will be marked as failed"
+        TOOL_ERRORS=$((TOOL_ERRORS+1))
+        FAILED_TOOLS+="$t "
+      fi
+    done
   fi
 }
 
@@ -269,14 +249,15 @@ run_secrets_scan() {
     return
   fi
 
+  local no_git_history=false
   if [[ ! -d "${PROJECT_PATH}/.git" ]]; then
     no "No git in project"
     log "Scanning files only (no git history available)"
-    NO_GIT_HISTORY=true
+    no_git_history=true
   fi
 
   local -a flags
-  if [[ "$NO_GIT_HISTORY" == true ]] && gitleaks dir --help &>/dev/null; then
+  if [[ "$no_git_history" == true ]] && gitleaks dir --help &>/dev/null; then
     # gitleaks 8.19+: `dir` replaces the deprecated `detect --no-git`
     flags=(dir "$PROJECT_PATH"
       --report-path "$out"
@@ -292,7 +273,7 @@ run_secrets_scan() {
       --no-banner
       --exit-code 1
     )
-    [[ "$NO_GIT_HISTORY" == true ]] && flags+=(--no-git)
+    [[ "$no_git_history" == true ]] && flags+=(--no-git)
   fi
 
   log "Scanning for secrets in $(basename "$PROJECT_PATH")..."
@@ -648,8 +629,6 @@ main() {
   done
 
   # Zip the report folder and remove the original.
-  # Only the timestamped folder this run created is ever deleted — never a
-  # pre-existing directory the user pointed -o at.
   local zip_file="${OUTPUT_DIR}.zip"
   if ! cmd_ok zip; then
     warn "zip not found — report kept at: ${OUTPUT_DIR}"
