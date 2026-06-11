@@ -18,9 +18,10 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 | `trivy` | `brew install trivy` |
 | `grype` | `brew install grype` |
 | `exiftool` | `brew install exiftool` |
-| `python3` | Có sẵn trên macOS / Linux |
 
 > **Tự động cài:** Script tự phát hiện tools còn thiếu và cài qua Homebrew (macOS) hoặc official install scripts / package manager (Linux) — không cần cài tay trước.
+>
+> **Optional:** `jq` (đếm findings trong summary) và `python3` (lớp GitHub Advisory). Thiếu `jq` → counts hiển thị 0, raw JSON reports vẫn đầy đủ. Thiếu `python3` → GitHub Advisory bị skip, 3 lớp còn lại chạy bình thường.
 
 ---
 
@@ -110,21 +111,15 @@ Tên thư mục lấy từ **tên folder gốc của project** được chỉ đ
 ```
 vfa_audit_output/
 └── 20250609_143022_my-project.zip
-    ├── gitleaks.json        # Secrets findings (Gitleaks — JSON)
-    ├── trivy.json           # Vuln + secret + license findings (Trivy — JSON)
-    ├── trivy.txt            # Vuln + secret + license findings (Trivy — table)
-    ├── grype.json           # CVE findings (Grype — JSON)
-    ├── grype.txt            # CVE findings (Grype — table)
-    ├── fresh-advisory.json  # CVE mới từ GitHub Advisory (mọi ecosystem)
-    ├── fresh-advisory.txt   # CVE mới dạng text
-    ├── font-license-exiftool.json # Font metadata (ExifTool — JSON)
-    ├── font-license-exiftool.txt  # Review license/copyright font
-    ├── summary.md           # Bảng tổng hợp Markdown
-    ├── summary.json         # Tổng hợp dạng JSON
-    └── <tool>.log           # Log lỗi — CHỈ xuất hiện khi scanner đó gặp lỗi
-                             #   ảnh hưởng chất lượng audit (gitleaks.log,
-                             #   trivy.log, grype.log, fresh-advisory.log,
-                             #   exiftool.log); chạy sạch thì không có file log
+    ├── gitleaks.json               # Secrets findings (Gitleaks)
+    ├── trivy.json                  # Vuln + secret + license findings (Trivy)
+    ├── grype.json                  # CVE findings (Grype)
+    ├── fresh-advisory.json         # CVE mới từ GitHub Advisory (mọi ecosystem)
+    ├── font-license-exiftool.json  # Font license/copyright metadata (ExifTool)
+    ├── summary.md                  # Bảng tổng hợp Markdown
+    ├── summary.json                # Tổng hợp dạng JSON (machine-readable)
+    └── <tool>.log                  # Log lỗi — CHỈ xuất hiện khi scanner đó gặp lỗi
+                                    #   ảnh hưởng chất lượng audit; chạy sạch thì không có
 ```
 
 > Nếu lệnh `zip` không khả dụng, script giữ nguyên folder thay vì dừng lại.
@@ -224,7 +219,7 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 ### Về Font License Scan (ExifTool)
 
 - ExifTool đọc metadata trực tiếp từ font độc lập: `.ttf`, `.otf`, `.woff`, `.woff2`.
-- Script tạo `font-license-exiftool.json` để lưu metadata gốc và `font-license-exiftool.txt` để review nhanh.
+- Script tạo `font-license-exiftool.json` lưu toàn bộ metadata gốc từ ExifTool.
 - Font bị flag khi thiếu metadata license/quyền sử dụng hoặc có cụm hạn chế như `personal use`, `non-commercial`, `trial`, `demo`, `restricted`, `proprietary`, `GPL`, `AGPL`, `SSPL`.
 - Metadata font không thay thế review pháp lý; nếu font không ghi rõ license, nên kiểm tra lại nguồn tải hoặc file license đi kèm.
 
@@ -237,8 +232,8 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 | Trường hợp | Thông báo |
 |---|---|
 | Không tạo được thư mục output | `Cannot create output directory: ...` → exit 2 |
-| Thiếu `python3` | `python3 is required but not found` → exit 2 |
 | Tool cài tự động thất bại | `Failed to install <tool>` + layer tương ứng báo `<tool> unavailable — scan NOT performed` |
+| Thiếu `python3` | `[NO] Skipped — python3 not available` → GitHub Advisory bị skip (không phải lỗi fatal) |
 | Gitleaks lỗi (exit > 1) | `Gitleaks failed (exit N) — see gitleaks.log` |
 | Report Gitleaks hỏng (JSON parse lỗi) | `Gitleaks report unreadable: ...` |
 | Trivy lỗi (DB download, crash…) | `Trivy failed (exit N) — see trivy.log` |
@@ -255,11 +250,11 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 | `summary.json` không sinh được | `[WARN]` (summary.md vẫn dùng được) |
 | `zip` thiếu / nén lỗi | `[WARN]` — giữ nguyên folder báo cáo |
 
-Report của GitHub Advisory (`fresh-advisory.txt`/`.json`) cũng tự ghi dòng `WARNING ... PARTIAL` và số request thành công/thất bại để kết quả không bao giờ bị hiểu nhầm là "sạch".
+File `fresh-advisory.json` ghi rõ `"partial": true`, số request thành công/thất bại và warning message — kết quả không bao giờ bị hiểu nhầm là "sạch".
 
 ## Exit Codes
 
 | Code | Ý nghĩa |
 |------|---------|
 | `0` | Script chạy xong, kể cả khi có findings (status thật nằm trong `summary.json`) |
-| `2` | Lỗi tham số, thiếu `python3`, không tạo được thư mục output, hoặc không thể cài tools |
+| `2` | Lỗi tham số, không tạo được thư mục output, hoặc không thể cài tools |
