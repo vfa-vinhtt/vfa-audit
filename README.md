@@ -101,45 +101,45 @@ curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit
 
 ## Output
 
-Mỗi lần chạy tạo một file zip tại `/tmp/vfa_audit/<timestamp>_<project-name>.zip`.  
-Tên thư mục lấy từ **tên folder gốc của project** được chỉ định.
+Mỗi lần chạy tạo một file zip tại **thư mục hiện tại** (nơi chạy script), tên theo dạng `<timestamp>_<project-name>.zip`.  
+Folder tạm trong `/tmp/vfa_audit/` bị xoá sau khi nén xong.
 
 ```
-/tmp/vfa_audit/
+<thư-mục-hiện-tại>/
 └── 20250609_143022_my-project.zip
     ├── gitleaks.json               # Secrets findings (Gitleaks)
+    ├── gitleaks-config.toml        # Config Gitleaks dùng cho lần scan này
     ├── trivy.json                  # Vuln + secret + license findings (Trivy)
     ├── grype.json                  # CVE findings (Grype)
     ├── font-license-exiftool.json  # Font license/copyright metadata (ExifTool)
-    ├── summary.md                  # Bảng tổng hợp Markdown
+    ├── summary.txt                 # Bảng tổng hợp dạng text
     ├── summary.json                # Tổng hợp dạng JSON (machine-readable)
     └── <tool>.log                  # Log lỗi — CHỈ xuất hiện khi scanner đó gặp lỗi
                                     #   ảnh hưởng chất lượng audit; chạy sạch thì không có
 ```
 
-> Nếu lệnh `zip` không khả dụng, script giữ nguyên folder thay vì dừng lại.
+> Nếu lệnh `zip` không khả dụng, script giữ nguyên folder tại `/tmp/vfa_audit/` thay vì dừng lại.
 
-### Ví dụ summary.md
+### Ví dụ summary.txt
 
-```markdown
-# Security Audit Summary
+```
+  Date         2025-06-09 14:30:22
+  Project      /Users/dev/my-project
+  Severity     HIGH+
+  Status       WARN
 
-| Field | Value |
-|---|---|
-| Date | 2025-06-09 14:30:22 |
-| Project | `/Users/dev/my-project` |
-| Severity | `HIGH+` |
-| Status | `WARN` |
-
-| Scanner | Status | Findings |
-|---|---|---:|
-| Secrets (Gitleaks) | findings | 2 |
-| Secrets (Trivy) | ok | 0 |
-| CVE (Trivy) | findings | 14 |
-| CVE (Grype) | findings | 11 |
-| License (Trivy) | findings | 3 |
-| Font License (ExifTool) | findings | 2 |
-| **Total** | | **32** |
+┌─────────────────────────────┬────────────┬──────────┐
+│ Scanner                     │ Status     │ Findings │
+├─────────────────────────────┼────────────┼──────────┤
+│ Secrets (Gitleaks)          │ findings   │        2 │
+│ Secrets (Trivy)             │ ok         │        0 │
+│ CVE (Trivy)                 │ findings   │       14 │
+│ CVE (Grype)                 │ findings   │       11 │
+│ License (Trivy)             │ findings   │        3 │
+│ Font License (ExifTool)     │ findings   │        2 │
+├─────────────────────────────┼────────────┼──────────┤
+│ TOTAL                       │            │       32 │
+└─────────────────────────────┴────────────┴──────────┘
 ```
 
 Cột **Status** cho biết kết quả có tin được hay không: `ok` / `findings` (scanner chạy xong), `failed` (scanner lỗi — kết quả **không đầy đủ**, xem `logs/`), `skipped` (bị bỏ qua theo flag). Status tổng là `FAIL` khi có scanner lỗi, `WARN` khi có findings, `PASS` khi sạch.
@@ -209,7 +209,7 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 | Trivy lỗi (DB download, crash…) | `Trivy failed (exit N) — see trivy.log` |
 | Grype lỗi | `Grype failed (exit N) — see grype.log` |
 | ExifTool lỗi đọc file | `ExifTool failed (exit N) — see exiftool.log` (lỗi lẻ tẻ nhưng vẫn có data → chỉ `[WARN]`) |
-| `summary.json` không sinh được | `[WARN]` (summary.md vẫn dùng được) |
+| `summary.json` không sinh được | `[WARN]` (summary.txt vẫn dùng được) |
 | `zip` thiếu / nén lỗi | `[WARN]` — giữ nguyên folder báo cáo |
 
 ## Exit Codes

@@ -1,3 +1,4 @@
 .DS_Store
-vfa_audit_output
+temp
+*.zip
 .env
