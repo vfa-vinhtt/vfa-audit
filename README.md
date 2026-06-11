@@ -10,6 +10,17 @@ Tool kiểm tra bảo mật source code tự động, kết hợp 3 lớp scan:
 
 ---
 
+## Mục đích kiểm tra
+
+Tool giúp trả lời các câu hỏi sau trước khi giao sản phẩm hoặc kiểm tra code nhận từ đối tác / bên thứ ba:
+
+- **Sensitive information** — Source code có chứa thông tin nhạy cảm không? Ví dụ: password, AWS account, access key, private token… (bao gồm cả code nhận từ đối tác hoặc bên thứ ba)
+- **CVE** — Các thư viện đang sử dụng có lỗ hổng bảo mật đã biết (CVE) không?
+- **Font license** — Project có sử dụng font chưa được cấp phép thương mại không?
+- **Library / source code license** — Các thư viện hoặc đoạn code sử dụng có license phù hợp với mục đích thương mại không?
+
+---
+
 ## Yêu cầu
 
 macOS với [Homebrew](https://brew.sh/).
@@ -26,82 +37,22 @@ macOS với [Homebrew](https://brew.sh/).
 
 ---
 
-## Cài đặt
-
-```bash
-git clone <repo>
-cd tools/audits
-chmod +x vfa-audit-scan.sh
-```
-
----
-
 ## Cách dùng
 
 ### Cú pháp
 
-```
-./vfa-audit-scan.sh [OPTIONS] [project-path]
-```
+Script luôn quét **thư mục hiện tại** — `cd` vào project trước khi chạy.
 
-Nếu bỏ qua `project-path`, script quét **thư mục hiện tại**.
-
-> **Khuyến nghị:** Để Gitleaks quét được toàn bộ git history, hãy **`cd` vào thư mục gốc của project cần audit** trước khi chạy, hoặc truyền đường dẫn tuyệt đối qua `project-path`. Gitleaks cần truy cập thư mục `.git` — nếu không tìm thấy, script tự chuyển sang quét file hiện tại và bỏ qua lịch sử commit.
+> Gitleaks cần truy cập thư mục `.git` để quét toàn bộ git history. Nếu không tìm thấy, script tự chuyển sang quét file hiện tại.
 
 ### Chạy trực tiếp từ GitHub (không cần clone)
-#### Khuyến nghị:
+
 ```bash
-# Quét thư mục hiện tại
+cd /path/to/project
 curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash
 ```
 
-#### Tuỳ chọn:
-```bash
-# Truyền options qua `bash -s --`
-curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- --severity HIGH
-
-# Chỉ định project khác thư mục hiện tại
-# ⚠️  Gitleaks sẽ CHỈ quét file hiện tại, KHÔNG quét git history.
-#     Để quét đầy đủ cả history: cd vào project rồi chạy lệnh đầu tiên ở trên.
-curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash -s -- /path/to/project
-```
-
-> **Lưu ý:** Chạy qua `curl | bash` sẽ tự động cài tools còn thiếu qua Homebrew. Cần có Homebrew đã cài sẵn trên máy.
-
-### Options
-
-| Option | Mặc định | Mô tả |
-|--------|----------|-------|
-| `-s, --severity <level>` | `UNKNOWN` | Mức độ tối thiểu: `UNKNOWN` / `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` — mặc định lấy toàn bộ |
-| `--skip-secrets` | — | Bỏ qua scan secrets (Gitleaks) |
-| `--skip-cve` | — | Bỏ qua scan CVE (Trivy vuln/secret + Grype) |
-| `--skip-license` | — | Bỏ qua scan license |
-| `-v, --verbose` | — | Hiện toàn bộ output của từng tool |
-| `-h, --help` | — | Hiển thị hướng dẫn |
-
----
-
-## Ví dụ
-
-**Scan cơ bản:**
-```bash
-./vfa-audit-scan.sh /path/to/project
-```
-
-**Chỉ báo cáo từ HIGH trở lên:**
-```bash
-./vfa-audit-scan.sh --severity HIGH /path/to/project
-```
-
-**Scan nhanh, chỉ CVE (bỏ secrets và license):**
-```bash
-./vfa-audit-scan.sh --skip-secrets --skip-license /path/to/project
-```
-
-**Xem full output của từng tool:**
-```bash
-./vfa-audit-scan.sh --verbose /path/to/project
-```
+> **Lưu ý:** Sẽ tự động cài tools còn thiếu qua Homebrew. Cần có Homebrew đã cài sẵn trên máy.
 
 ---
 

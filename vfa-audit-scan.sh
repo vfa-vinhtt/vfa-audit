@@ -3,11 +3,11 @@
 # vfa-audit-scan.sh —  Source-code security audit, URL-friendly runner
 #
 #   Layer 1 — Secrets  : Gitleaks + Trivy  (credentials, tokens, API keys)
-#   Layer 2 — CVE      : Trivy + Grype
+#   Layer 2 — CVE      : Trivy
 #   Layer 3 — License  : Trivy + ExifTool  (library & font license compliance)
 #
 # Usage:
-#   ./vfa-audit-scan.sh [OPTIONS] [project-path]
+#   ./vfa-audit-scan.sh
 #   curl -fsSL <raw-github-url>/vfa-audit-scan.sh | bash
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -34,18 +34,12 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 # ── Defaults ──────────────────────────────────────────────────────────────────
 OUTPUT_BASE="/tmp/vfa_audit"
 OUTPUT_DIR=""              # resolved in parse_args, always a folder this run creates
-SEVERITY="UNKNOWN"         # UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL
-SKIP_SECRETS=false
-SKIP_CVE=false
-SKIP_LICENSE=false
-VERBOSE=false
 PROJECT_PATH=""
 
 # ── Counters ──────────────────────────────────────────────────────────────────
 SECRET_COUNT=0
 TRIVY_SECRET_COUNT=0
 TRIVY_CVE_COUNT=0
-GRYPE_CVE_COUNT=0
 LICENSE_ISSUE_COUNT=0
 FONT_FILE_COUNT=0
 FONT_LICENSE_ISSUE_COUNT=0
@@ -54,7 +48,6 @@ TOOL_ERRORS=0
 # ── Per-scanner status: ok | findings | failed | skipped ─────────────────────
 SECRETS_STATUS="skipped"
 TRIVY_STATUS="skipped"
-GRYPE_STATUS="skipped"
 FONT_STATUS="skipped"
 
 FAILED_TOOLS=" "           # space-separated tools that could not be installed
@@ -79,88 +72,10 @@ cmd_ok()      { command -v "$1" &>/dev/null; }
 tool_failed() { [[ "$FAILED_TOOLS" == *" $1 "* ]]; }
 keep_log()    { KEEP_LOGS+="$(basename "$1") "; }
 
-# Returns comma-separated severity list from $SEVERITY upward
-# e.g. MEDIUM → "MEDIUM,HIGH,CRITICAL"
-severity_list() {
-  local all=("UNKNOWN" "LOW" "MEDIUM" "HIGH" "CRITICAL")
-  local out="" active=false
-  for lvl in "${all[@]}"; do
-    [[ "$lvl" == "$SEVERITY" ]] && active=true
-    [[ "$active" == true ]] && out+="${lvl},"
-  done
-  echo "${out%,}"
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
-usage() {
-  cat <<EOF
-${BLD}USAGE${NC}
-  ${SCRIPT_NAME} [OPTIONS] [project-path]
-
-${BLD}DESCRIPTION${NC}
-  3-layer source code security audit combining four scanners:
-    • Secrets  — Gitleaks (files + git history) + Trivy secret scanner
-    • CVE      — Trivy + Grype: known dependency vulnerabilities
-    • License  — Trivy + ExifTool: library and font license compliance
-
-  If project-path is omitted, the script scans the current directory.
-  This makes it safe to run directly from a raw GitHub URL.
-
-${BLD}OPTIONS${NC}
-  -s, --severity <level>   Minimum severity: UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL
-                           (default: UNKNOWN — include everything)
-      --skip-secrets       Skip Gitleaks scan
-      --skip-cve           Skip CVE scan (Trivy vuln/secret + Grype)
-      --skip-license       Skip license scan (Trivy license + ExifTool)
-  -v, --verbose            Show full raw scanner output
-  -h, --help               Show this help
-
-${BLD}EXAMPLES${NC}
-  ${SCRIPT_NAME} /path/to/project
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/vfa-audit-scan.sh | bash -s -- --severity HIGH
-  ${SCRIPT_NAME} --severity HIGH ~/projects/api
-  ${SCRIPT_NAME} --skip-license --verbose /opt/app
-
-${BLD}OUTPUT${NC}
-  /tmp/vfa_audit/<timestamp>_<project>.zip  (folder is zipped after the run)
-    gitleaks.json               Secrets findings (Gitleaks)
-    trivy.json                  Vuln + secret + license findings (Trivy)
-    grype.json                  CVE findings (Grype)
-    font-license-exiftool.json  Font license/copyright metadata (ExifTool)
-    summary.txt                 Audit summary
-    summary.json                Machine-readable summary
-    <tool>.log                  Scanner error log — only present when that scanner
-                                hit an error affecting audit quality
-EOF
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-parse_args() {
-  [[ $# -eq 0 ]] && PROJECT_PATH="$RUN_DIR"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -s|--severity)        SEVERITY="$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]')"; shift 2 ;;
-      --skip-secrets)       SKIP_SECRETS=true;      shift   ;;
-      --skip-cve)           SKIP_CVE=true;          shift   ;;
-      --skip-license)       SKIP_LICENSE=true;      shift   ;;
-      -v|--verbose)         VERBOSE=true;           shift   ;;
-      -h|--help)            usage; exit 0           ;;
-      -*)                   err "Unknown option: $1"; usage; exit 2 ;;
-      *)                    PROJECT_PATH="$1";      shift   ;;
-    esac
-  done
-
-  [[ -z "$PROJECT_PATH" ]] && PROJECT_PATH="$RUN_DIR"
-  [[ ! -d "$PROJECT_PATH" ]] && { err "Not a directory: $PROJECT_PATH"; exit 2; }
-  PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
-
+init() {
+  PROJECT_PATH="$RUN_DIR"
   OUTPUT_DIR="${OUTPUT_BASE}/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
-
-  case "$SEVERITY" in
-    UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL) ;;
-    *) err "Invalid severity '$SEVERITY'. Use: UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL"; exit 2 ;;
-  esac
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,11 +102,10 @@ check_tools() {
     fi
   }
 
-  _check jq "jq --version"
-  [[ "$SKIP_SECRETS" != true ]] && _check gitleaks "gitleaks version"
-  [[ "$SKIP_CVE" != true || "$SKIP_LICENSE" != true ]] && _check trivy "trivy version"
-  [[ "$SKIP_CVE" != true ]] && _check grype "grype version"
-  [[ "$SKIP_LICENSE" != true ]] && _check exiftool "exiftool -ver"
+  _check jq       "jq --version"
+  _check gitleaks "gitleaks version"
+  _check trivy    "trivy version"
+  _check exiftool "exiftool -ver"
   cmd_ok zip || warn "zip not found — report folder will not be archived"
 
   if [[ ${#missing[@]} -gt 0 ]]; then
@@ -207,7 +121,7 @@ check_tools() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 run_secrets_scan() {
-  section "1/4  Secrets  (Gitleaks)"
+  section "1/3  Secrets  (Gitleaks)"
   local out="${OUTPUT_DIR}/gitleaks.json"
   local scan_log="${OUTPUT_DIR}/gitleaks.log"
 
@@ -218,23 +132,31 @@ run_secrets_scan() {
   fi
 
   local no_git_history=false
-  if [[ "$PROJECT_PATH" != "$RUN_DIR" ]]; then
-    # Scanning a different directory: skip git history to avoid gitleaks
-    # resolving git context from the current working directory instead of
-    # the target project.
-    no_git_history=true
-    log "Project path differs from working directory — scanning files only"
-    warn "git history skipped"
-  elif [[ ! -d "${PROJECT_PATH}/.git" ]]; then
+  if [[ ! -d "${PROJECT_PATH}/.git" ]]; then
     no "No git in project"
     log "Scanning files only (no git history available)"
     no_git_history=true
   fi
 
+  # Inline config: extend default rules + ignore .env files
+  local GITLEAKS_CONFIG_TOML
+  GITLEAKS_CONFIG_TOML="$(cat <<'TOML'
+[extend]
+  useDefault = true
+
+[allowlist]
+  description = "ignore .env files"
+  paths = ['''^\.env$''', '''^\.env\..*''']
+TOML
+)"
+  local gl_config="${OUTPUT_DIR}/gitleaks-config.toml"
+  printf '%s\n' "$GITLEAKS_CONFIG_TOML" > "$gl_config"
+
   local -a flags
   if [[ "$no_git_history" == true ]] && gitleaks dir --help &>/dev/null; then
     # gitleaks 8.19+: `dir` replaces the deprecated `detect --no-git`
     flags=(dir "$PROJECT_PATH"
+      --config      "$gl_config"
       --report-path "$out"
       --report-format json
       --no-banner
@@ -243,6 +165,7 @@ run_secrets_scan() {
   else
     flags=(detect
       --source      "$PROJECT_PATH"
+      --config      "$gl_config"
       --report-path "$out"
       --report-format json
       --no-banner
@@ -254,7 +177,6 @@ run_secrets_scan() {
   log "Scanning for secrets in $(basename "$PROJECT_PATH")..."
   local rc=0
   gitleaks "${flags[@]}" >"$scan_log" 2>&1 || rc=$?
-  [[ "$VERBOSE" == true ]] && cat "$scan_log"
 
   # gitleaks: 0 = clean, 1 = leaks found, anything else = tool error
   if [[ $rc -gt 1 ]]; then
@@ -280,13 +202,9 @@ run_secrets_scan() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Single full Trivy pass: vuln + secret (+ license) depending on skip flags.
+# Single full Trivy pass: vuln + secret + license.
 run_trivy_scan() {
-  local scanners=""
-  [[ "$SKIP_CVE" != true ]] && scanners="vuln,secret"
-  [[ "$SKIP_LICENSE" != true ]] && scanners="${scanners:+${scanners},}license"
-
-  section "2/4  Trivy  (${scanners})"
+  section "2/3  Trivy  (vuln, secret, license)"
   local tj="${OUTPUT_DIR}/trivy.json"
   local scan_log="${OUTPUT_DIR}/trivy.log"
 
@@ -296,12 +214,10 @@ run_trivy_scan() {
     return
   fi
 
-  local -a flags=(fs --scanners "$scanners" --severity "$(severity_list)" --quiet)
-  [[ "$scanners" == *license* ]] && flags+=(--license-full)
-
-  log "Trivy: scanning ${scanners} (severity ${SEVERITY}+)..."
+  log "Trivy: scanning vuln, secret, license..."
   local rc=0
-  trivy "${flags[@]}" --format json --output "$tj" "$PROJECT_PATH" 2>"$scan_log" || rc=$?
+  trivy fs --scanners vuln,secret,license --license-full --quiet \
+    --format json --output "$tj" "$PROJECT_PATH" 2>"$scan_log" || rc=$?
 
   if [[ $rc -ne 0 || ! -f "$tj" ]]; then
     TRIVY_STATUS="failed"
@@ -323,35 +239,30 @@ run_trivy_scan() {
     [[ "${!_v}" =~ ^[0-9]+$ ]] || printf -v "$_v" '%s' 0
   done
 
-  if [[ "$SKIP_CVE" != true ]]; then
-    if [[ "$TRIVY_CVE_COUNT" -eq 0 ]]; then
-      ok "Trivy CVE: none at ${SEVERITY}+"
-    else
-      warn "Trivy CVE: ${TRIVY_CVE_COUNT} found"
-    fi
-    if [[ "$TRIVY_SECRET_COUNT" -eq 0 ]]; then
-      ok "Trivy secrets: none"
-    else
-      warn "Trivy secrets: ${TRIVY_SECRET_COUNT} found"
+  if [[ "$TRIVY_CVE_COUNT" -eq 0 ]]; then
+    ok "Trivy CVE: none"
+  else
+    warn "Trivy CVE: ${TRIVY_CVE_COUNT} found"
+  fi
+  if [[ "$TRIVY_SECRET_COUNT" -eq 0 ]]; then
+    ok "Trivy secrets: none"
+  else
+    warn "Trivy secrets: ${TRIVY_SECRET_COUNT} found"
+  fi
+  if [[ "$LICENSE_ISSUE_COUNT" -eq 0 ]]; then
+    ok "Trivy license: no flagged licenses"
+  else
+    warn "Trivy license: ${LICENSE_ISSUE_COUNT} issue(s) found"
+    if cmd_ok jq; then
+      jq -r '
+        .Results[]?.Licenses[]?
+        | select(.Severity == "HIGH" or .Severity == "CRITICAL")
+        | "  [\(.Severity)]  \(.PkgName // "?")  \(.Name)"
+      ' "$tj" 2>/dev/null | head -20 || true
     fi
   fi
-
-  if [[ "$SKIP_LICENSE" != true ]]; then
-    if [[ "$LICENSE_ISSUE_COUNT" -eq 0 ]]; then
-      ok "Trivy license: no flagged licenses"
-    else
-      warn "Trivy license: ${LICENSE_ISSUE_COUNT} issue(s) found"
-      if cmd_ok jq; then
-        jq -r '
-          .Results[]?.Licenses[]?
-          | select(.Severity == "HIGH" or .Severity == "CRITICAL")
-          | "  [\(.Severity)]  \(.PkgName // "?")  \(.Name)"
-        ' "$tj" 2>/dev/null | head -20 || true
-      fi
-    fi
-    log "${DIM}Note: Trivy reads package-manager metadata. Standalone font files (.ttf/.woff)${NC}"
-    log "${DIM}      not managed by a package registry are covered by the ExifTool layer.${NC}"
-  fi
+  log "${DIM}Note: Trivy reads package-manager metadata. Standalone font files (.ttf/.woff)${NC}"
+  log "${DIM}      not managed by a package registry are covered by the ExifTool layer.${NC}"
 
   if [[ $((TRIVY_CVE_COUNT + TRIVY_SECRET_COUNT + LICENSE_ISSUE_COUNT)) -gt 0 ]]; then
     TRIVY_STATUS="findings"
@@ -361,54 +272,8 @@ run_trivy_scan() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-run_grype_scan() {
-  section "3/4  CVE cross-check  (Grype)"
-  local gj="${OUTPUT_DIR}/grype.json"
-  local scan_log="${OUTPUT_DIR}/grype.log"
-
-  if tool_failed grype || ! cmd_ok grype; then
-    GRYPE_STATUS="failed"
-    err "grype unavailable — CVE cross-check NOT performed"
-    return
-  fi
-
-  log "Grype: cross-checking vulnerabilities..."
-  local rc=0
-  grype "dir:${PROJECT_PATH}" --output json --file "$gj" --quiet 2>"$scan_log" || rc=$?
-
-  if [[ $rc -ne 0 || ! -f "$gj" ]]; then
-    GRYPE_STATUS="failed"
-    TOOL_ERRORS=$((TOOL_ERRORS+1))
-    keep_log "$scan_log"
-    err "Grype failed (exit ${rc}) — see ${scan_log}"
-    return
-  fi
-
-  if cmd_ok jq; then
-    if [[ "$SEVERITY" == "UNKNOWN" ]]; then
-      GRYPE_CVE_COUNT=$(jq '[.matches[]?] | length' "$gj" 2>/dev/null || echo 0)
-    else
-      local _sev_re
-      _sev_re="$(severity_list | tr '[:upper:]' '[:lower:]' | tr ',' '|')"
-      GRYPE_CVE_COUNT=$(jq --arg re "$_sev_re" \
-        '[.matches[]? | select((.vulnerability.severity // "") | ascii_downcase | test($re))] | length' \
-        "$gj" 2>/dev/null || echo 0)
-    fi
-  fi
-  [[ "$GRYPE_CVE_COUNT" =~ ^[0-9]+$ ]] || GRYPE_CVE_COUNT=0
-
-  if [[ "$GRYPE_CVE_COUNT" -eq 0 ]]; then
-    GRYPE_STATUS="ok"
-    ok "Grype: no CVEs at ${SEVERITY}+"
-  else
-    GRYPE_STATUS="findings"
-    warn "Grype: ${GRYPE_CVE_COUNT} CVE(s) found"
-  fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
 run_font_license_scan() {
-  section "4/4  Font License  (ExifTool)"
+  section "3/3  Font License  (ExifTool)"
   local fj="${OUTPUT_DIR}/font-license-exiftool.json"
   local scan_log="${OUTPUT_DIR}/exiftool.log"
 
@@ -475,7 +340,7 @@ run_font_license_scan() {
 # ─────────────────────────────────────────────────────────────────────────────
 generate_summary() {
   section "Audit Summary"
-  local total=$((SECRET_COUNT + TRIVY_SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
+  local total=$((SECRET_COUNT + TRIVY_SECRET_COUNT + TRIVY_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
   local stxt="${OUTPUT_DIR}/summary.txt"
   local sjson="${OUTPUT_DIR}/summary.json"
 
@@ -485,32 +350,26 @@ generate_summary() {
   [[ $total -gt 0 ]] && status="WARN"
   [[ $TOOL_ERRORS -gt 0 ]] && status="FAIL"
 
-  # Trivy sub-rows share one run: skipped follows the layer's skip flag,
-  # failed comes from the run itself, otherwise the row follows its count.
-  _row_status() {
-    local base="$1" count="$2" skipped="$3"
-    if [[ "$skipped" == true ]]; then echo "skipped"; return; fi
-    case "$base" in
-      failed|skipped) echo "$base" ;;
-      *) [[ "$count" -gt 0 ]] && echo "findings" || echo "ok" ;;
+  _trivy_row() {
+    case "$TRIVY_STATUS" in
+      failed|skipped) echo "$TRIVY_STATUS" ;;
+      *) [[ "$1" -gt 0 ]] && echo "findings" || echo "ok" ;;
     esac
   }
 
   {
-    printf '  %-12s %s\n' "Date"     "$(date '+%Y-%m-%d %H:%M:%S')"
-    printf '  %-12s %s\n' "Project"  "$PROJECT_PATH"
-    printf '  %-12s %s\n' "Severity" "${SEVERITY}+"
-    printf '  %-12s %s\n' "Status"   "$status"
+    printf '  %-12s %s\n' "Date"    "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '  %-12s %s\n' "Project" "$PROJECT_PATH"
+    printf '  %-12s %s\n' "Status"  "$status"
     echo ""
     printf '┌─────────────────────────────┬────────────┬──────────┐\n'
     printf '│ %-27s │ %-10s │ %8s │\n' "Scanner" "Status" "Findings"
     printf '├─────────────────────────────┼────────────┼──────────┤\n'
-    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Gitleaks)"       "$SECRETS_STATUS"                                                        "$SECRET_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Trivy)"          "$(_row_status "$TRIVY_STATUS" "$TRIVY_SECRET_COUNT" "$SKIP_CVE")"        "$TRIVY_SECRET_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Trivy)"              "$(_row_status "$TRIVY_STATUS" "$TRIVY_CVE_COUNT"    "$SKIP_CVE")"        "$TRIVY_CVE_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Grype)"              "$GRYPE_STATUS"                                                          "$GRYPE_CVE_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "License (Trivy)"          "$(_row_status "$TRIVY_STATUS" "$LICENSE_ISSUE_COUNT" "$SKIP_LICENSE")"   "$LICENSE_ISSUE_COUNT"
-    printf '│ %-27s │ %-10s │ %8d │\n' "Font License (ExifTool)"  "$FONT_STATUS"                                                           "$FONT_LICENSE_ISSUE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Gitleaks)"      "$SECRETS_STATUS"                          "$SECRET_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Trivy)"         "$(_trivy_row "$TRIVY_SECRET_COUNT")"      "$TRIVY_SECRET_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Trivy)"             "$(_trivy_row "$TRIVY_CVE_COUNT")"         "$TRIVY_CVE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "License (Trivy)"         "$(_trivy_row "$LICENSE_ISSUE_COUNT")"     "$LICENSE_ISSUE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Font License (ExifTool)" "$FONT_STATUS"                             "$FONT_LICENSE_ISSUE_COUNT"
     printf '├─────────────────────────────┼────────────┼──────────┤\n'
     printf '│ %-27s │ %-10s │ %8d │\n' "TOTAL" "" "$total"
     if [[ $TOOL_ERRORS -gt 0 ]]; then
@@ -523,7 +382,6 @@ generate_summary() {
     jq -n \
       --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg project    "$PROJECT_PATH" \
-      --arg severity   "$SEVERITY" \
       --arg status     "$status" \
       --arg outdir     "$OUTPUT_DIR" \
       --argjson total         "$total" \
@@ -534,29 +392,25 @@ generate_summary() {
       --argjson trivy_cve     "$TRIVY_CVE_COUNT" \
       --argjson trivy_secrets "$TRIVY_SECRET_COUNT" \
       --argjson trivy_license "$LICENSE_ISSUE_COUNT" \
-      --arg  grype_status     "$GRYPE_STATUS" \
-      --argjson grype_count   "$GRYPE_CVE_COUNT" \
       --arg  font_status      "$FONT_STATUS" \
       --argjson font_files    "$FONT_FILE_COUNT" \
       --argjson font_issues   "$FONT_LICENSE_ISSUE_COUNT" \
       '{
-        timestamp: $timestamp, project: $project,
-        severity_threshold: $severity, status: $status,
+        timestamp: $timestamp, project: $project, status: $status,
         scanners: {
           secrets_gitleaks: {status: $secrets_status, findings: $secrets_count},
           trivy: {status: $trivy_status, cve: $trivy_cve, secrets: $trivy_secrets, license_issues: $trivy_license},
-          cve_grype: {status: $grype_status, findings: $grype_count},
           font_license: {status: $font_status, files: $font_files, issues: $font_issues}
         },
         total_findings: $total, tool_errors: $tool_errors, output_dir: $outdir
       }' > "$sjson" 2>/dev/null \
-      || warn "summary.json generation failed — summary.md is still valid"
+      || warn "summary.json generation failed — summary.txt is still valid"
   fi
 
   echo ""
 
   case "$status" in
-    PASS) ok   "All scans passed — no findings at ${SEVERITY}+" ;;
+    PASS) ok   "All scans passed — no findings" ;;
     WARN) warn "Total findings : ${total}" ;;
     FAIL)
       [[ $total -gt 0 ]] && warn "Total findings : ${total}"
@@ -566,31 +420,27 @@ generate_summary() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 main() {
-  parse_args "$@"
+  init
 
   echo ""
   echo -e "${BLD}VFA Security Audit${NC}"
-  echo -e "${DIM}Project  : ${PROJECT_PATH}${NC}"
-  echo -e "${DIM}Reports  : ${OUTPUT_DIR}${NC}"
-  echo -e "${DIM}Severity : ${SEVERITY}+${NC}"
+  echo -e "${DIM}Project : ${PROJECT_PATH}${NC}"
+  echo -e "${DIM}Reports : ${OUTPUT_DIR}${NC}"
 
   mkdir -p "${OUTPUT_DIR}" \
     || { err "Cannot create output directory: ${OUTPUT_DIR}"; exit 2; }
   check_tools
 
-  [[ "$SKIP_SECRETS" != true ]] && run_secrets_scan
-  [[ "$SKIP_CVE" != true || "$SKIP_LICENSE" != true ]] && run_trivy_scan
-  if [[ "$SKIP_CVE" != true ]]; then
-    run_grype_scan
-  fi
-  [[ "$SKIP_LICENSE" != true ]] && run_font_license_scan
+  run_secrets_scan
+  run_trivy_scan
+  run_font_license_scan
 
   generate_summary
 
   # Logs are kept only when they explain an error that affects audit quality;
   # logs of scanners that ran cleanly are removed before archiving.
   local lf
-  for lf in gitleaks.log trivy.log grype.log exiftool.log; do
+  for lf in gitleaks.log trivy.log exiftool.log; do
     [[ "$KEEP_LOGS" == *" ${lf} "* ]] || rm -f "${OUTPUT_DIR}/${lf}"
   done
 
@@ -614,4 +464,4 @@ main() {
   exit 0
 }
 
-main "$@"
+main
