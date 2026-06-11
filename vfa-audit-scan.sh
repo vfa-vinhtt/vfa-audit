@@ -32,6 +32,7 @@ esac
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
+OUTPUT_BASE="/tmp/vfa_audit"
 OUTPUT_DIR=""              # resolved in parse_args, always a folder this run creates
 SEVERITY="UNKNOWN"         # UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL
 SKIP_SECRETS=false
@@ -127,7 +128,7 @@ ${BLD}OUTPUT${NC}
     trivy.json                  Vuln + secret + license findings (Trivy)
     grype.json                  CVE findings (Grype)
     font-license-exiftool.json  Font license/copyright metadata (ExifTool)
-    summary.md                  Markdown summary
+    summary.txt                 Audit summary
     summary.json                Machine-readable summary
     <tool>.log                  Scanner error log — only present when that scanner
                                 hit an error affecting audit quality
@@ -154,7 +155,7 @@ parse_args() {
   [[ ! -d "$PROJECT_PATH" ]] && { err "Not a directory: $PROJECT_PATH"; exit 2; }
   PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
-  OUTPUT_DIR="/tmp/vfa_audit/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
+  OUTPUT_DIR="${OUTPUT_BASE}/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
 
   case "$SEVERITY" in
     UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL) ;;
@@ -286,11 +287,7 @@ run_secrets_scan() {
   log "Scanning for secrets in $(basename "$PROJECT_PATH")..."
   local rc=0
   gitleaks "${flags[@]}" >"$scan_log" 2>&1 || rc=$?
-  if [[ "$VERBOSE" == true ]]; then
-    cat "$scan_log"
-  else
-    grep -E "(leak|ERR|WRN)" "$scan_log" || true
-  fi
+  [[ "$VERBOSE" == true ]] && cat "$scan_log"
 
   # gitleaks: 0 = clean, 1 = leaks found, anything else = tool error
   if [[ $rc -gt 1 ]]; then
@@ -311,11 +308,7 @@ run_secrets_scan() {
     ok "No secrets detected"
   else
     SECRETS_STATUS="findings"
-    warn "${SECRET_COUNT} secret(s) found  →  ${out}"
-    if cmd_ok jq; then
-      jq -r '.[] | "  [\(.RuleID)]  \(.File):\(.StartLine)  \(.Description)"' \
-        "$out" 2>/dev/null | head -20 || true
-    fi
+    warn "${SECRET_COUNT} secret(s) found"
   fi
 }
 
@@ -367,12 +360,12 @@ run_trivy_scan() {
     if [[ "$TRIVY_CVE_COUNT" -eq 0 ]]; then
       ok "Trivy CVE: none at ${SEVERITY}+"
     else
-      warn "Trivy CVE: ${TRIVY_CVE_COUNT} found  →  ${tj}"
+      warn "Trivy CVE: ${TRIVY_CVE_COUNT} found"
     fi
     if [[ "$TRIVY_SECRET_COUNT" -eq 0 ]]; then
       ok "Trivy secrets: none"
     else
-      warn "Trivy secrets: ${TRIVY_SECRET_COUNT} found  →  ${tj}"
+      warn "Trivy secrets: ${TRIVY_SECRET_COUNT} found"
     fi
   fi
 
@@ -380,7 +373,7 @@ run_trivy_scan() {
     if [[ "$LICENSE_ISSUE_COUNT" -eq 0 ]]; then
       ok "Trivy license: no flagged licenses"
     else
-      warn "Trivy license: ${LICENSE_ISSUE_COUNT} issue(s) found  →  ${tj}"
+      warn "Trivy license: ${LICENSE_ISSUE_COUNT} issue(s) found"
       if cmd_ok jq; then
         jq -r '
           .Results[]?.Licenses[]?
@@ -442,7 +435,7 @@ run_grype_scan() {
     ok "Grype: no CVEs at ${SEVERITY}+"
   else
     GRYPE_STATUS="findings"
-    warn "Grype: ${GRYPE_CVE_COUNT} CVE(s) found  →  ${gj}"
+    warn "Grype: ${GRYPE_CVE_COUNT} CVE(s) found"
   fi
 }
 
@@ -508,7 +501,7 @@ run_font_license_scan() {
     ok "ExifTool: ${FONT_FILE_COUNT} font file(s), no flagged font license metadata"
   else
     FONT_STATUS="findings"
-    warn "ExifTool: ${FONT_LICENSE_ISSUE_COUNT}/${FONT_FILE_COUNT} font file(s) need license review  →  ${fj}"
+    warn "ExifTool: ${FONT_LICENSE_ISSUE_COUNT}/${FONT_FILE_COUNT} font file(s) need license review"
   fi
 }
 
@@ -516,7 +509,7 @@ run_font_license_scan() {
 generate_summary() {
   section "Audit Summary"
   local total=$((SECRET_COUNT + TRIVY_SECRET_COUNT + TRIVY_CVE_COUNT + GRYPE_CVE_COUNT + LICENSE_ISSUE_COUNT + FONT_LICENSE_ISSUE_COUNT))
-  local stxt="${OUTPUT_DIR}/summary.md"
+  local stxt="${OUTPUT_DIR}/summary.txt"
   local sjson="${OUTPUT_DIR}/summary.json"
 
   # FAIL = at least one scanner could not run (results unreliable)
@@ -525,38 +518,38 @@ generate_summary() {
   [[ $total -gt 0 ]] && status="WARN"
   [[ $TOOL_ERRORS -gt 0 ]] && status="FAIL"
 
+  # Trivy sub-rows share one run: skipped follows the layer's skip flag,
+  # failed comes from the run itself, otherwise the row follows its count.
+  _row_status() {
+    local base="$1" count="$2" skipped="$3"
+    if [[ "$skipped" == true ]]; then echo "skipped"; return; fi
+    case "$base" in
+      failed|skipped) echo "$base" ;;
+      *) [[ "$count" -gt 0 ]] && echo "findings" || echo "ok" ;;
+    esac
+  }
+
   {
-    echo "# Security Audit Summary"
+    printf '  %-12s %s\n' "Date"     "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '  %-12s %s\n' "Project"  "$PROJECT_PATH"
+    printf '  %-12s %s\n' "Severity" "${SEVERITY}+"
+    printf '  %-12s %s\n' "Status"   "$status"
     echo ""
-    echo "| Field | Value |"
-    echo "|---|---|"
-    printf '| Date | %s |\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-    printf '| Project | `%s` |\n' "$PROJECT_PATH"
-    printf '| Severity | `%s+` |\n' "$SEVERITY"
-    printf '| Status | `%s` |\n' "$status"
-    echo ""
-    # Trivy sub-rows share one run: skipped follows the layer's skip flag,
-    # failed comes from the run itself, otherwise the row follows its count.
-    _row_status() {
-      local base="$1" count="$2" skipped="$3"
-      if [[ "$skipped" == true ]]; then echo "skipped"; return; fi
-      case "$base" in
-        failed|skipped) echo "$base" ;;
-        *) [[ "$count" -gt 0 ]] && echo "findings" || echo "ok" ;;
-      esac
-    }
-    echo "| Scanner | Status | Findings |"
-    echo "|---|---|---:|"
-    printf '| Secrets (Gitleaks) | %s | %d |\n' "$SECRETS_STATUS" "$SECRET_COUNT"
-    printf '| Secrets (Trivy) | %s | %d |\n' "$(_row_status "$TRIVY_STATUS" "$TRIVY_SECRET_COUNT" "$SKIP_CVE")" "$TRIVY_SECRET_COUNT"
-    printf '| CVE (Trivy) | %s | %d |\n' "$(_row_status "$TRIVY_STATUS" "$TRIVY_CVE_COUNT" "$SKIP_CVE")" "$TRIVY_CVE_COUNT"
-    printf '| CVE (Grype) | %s | %d |\n' "$GRYPE_STATUS" "$GRYPE_CVE_COUNT"
-    printf '| License (Trivy) | %s | %d |\n' "$(_row_status "$TRIVY_STATUS" "$LICENSE_ISSUE_COUNT" "$SKIP_LICENSE")" "$LICENSE_ISSUE_COUNT"
-    printf '| Font License (ExifTool) | %s | %d |\n' "$FONT_STATUS" "$FONT_LICENSE_ISSUE_COUNT"
-    printf '| **Total** | | **%d** |\n' "$total"
+    printf '┌─────────────────────────────┬────────────┬──────────┐\n'
+    printf '│ %-27s │ %-10s │ %8s │\n' "Scanner" "Status" "Findings"
+    printf '├─────────────────────────────┼────────────┼──────────┤\n'
+    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Gitleaks)"       "$SECRETS_STATUS"                                                        "$SECRET_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Secrets (Trivy)"          "$(_row_status "$TRIVY_STATUS" "$TRIVY_SECRET_COUNT" "$SKIP_CVE")"        "$TRIVY_SECRET_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Trivy)"              "$(_row_status "$TRIVY_STATUS" "$TRIVY_CVE_COUNT"    "$SKIP_CVE")"        "$TRIVY_CVE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "CVE (Grype)"              "$GRYPE_STATUS"                                                          "$GRYPE_CVE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "License (Trivy)"          "$(_row_status "$TRIVY_STATUS" "$LICENSE_ISSUE_COUNT" "$SKIP_LICENSE")"   "$LICENSE_ISSUE_COUNT"
+    printf '│ %-27s │ %-10s │ %8d │\n' "Font License (ExifTool)"  "$FONT_STATUS"                                                           "$FONT_LICENSE_ISSUE_COUNT"
+    printf '├─────────────────────────────┼────────────┼──────────┤\n'
+    printf '│ %-27s │ %-10s │ %8d │\n' "TOTAL" "" "$total"
     if [[ $TOOL_ERRORS -gt 0 ]]; then
-      printf '| Tool errors | | %d |\n' "$TOOL_ERRORS"
+      printf '│ %-27s │ %-10s │ %8d │\n' "Tool errors" "" "$TOOL_ERRORS"
     fi
+    printf '└─────────────────────────────┴────────────┴──────────┘\n'
   } | tee "$stxt"
 
   if cmd_ok jq; then
@@ -594,7 +587,6 @@ generate_summary() {
   fi
 
   echo ""
-  log "Full reports: ${OUTPUT_DIR}/"
 
   case "$status" in
     PASS) ok   "All scans passed — no findings at ${SEVERITY}+" ;;
@@ -635,14 +627,15 @@ main() {
     [[ "$KEEP_LOGS" == *" ${lf} "* ]] || rm -f "${OUTPUT_DIR}/${lf}"
   done
 
-  # Zip the report folder and remove the original.
-  local zip_file="${OUTPUT_DIR}.zip"
+  # Zip the report folder into the current working directory, then remove the original.
+  local zip_name="$(basename "$OUTPUT_DIR").zip"
+  local zip_file="${RUN_DIR}/${zip_name}"
   if ! cmd_ok zip; then
     warn "zip not found — report kept at: ${OUTPUT_DIR}"
     exit 0
   fi
   log "Archiving report..."
-  if (cd "$(dirname "$OUTPUT_DIR")" && zip -qr "$(basename "$OUTPUT_DIR").zip" "$(basename "$OUTPUT_DIR")") 2>/dev/null; then
+  if (cd "$(dirname "$OUTPUT_DIR")" && zip -qr "$zip_file" "$(basename "$OUTPUT_DIR")") 2>/dev/null; then
     if [[ "$(basename "$OUTPUT_DIR")" == "${TIMESTAMP}_"* ]]; then
       rm -rf "$OUTPUT_DIR"
     fi
