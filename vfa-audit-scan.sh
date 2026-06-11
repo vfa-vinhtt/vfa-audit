@@ -255,7 +255,8 @@ run_secrets_scan() {
     # resolving git context from the current working directory instead of
     # the target project.
     no_git_history=true
-    log "Project path differs from working directory — scanning files only (git history skipped)"
+    log "Project path differs from working directory — scanning files only"
+    warn "git history skipped"
   elif [[ ! -d "${PROJECT_PATH}/.git" ]]; then
     no "No git in project"
     log "Scanning files only (no git history available)"
@@ -609,7 +610,7 @@ main() {
   parse_args "$@"
 
   echo ""
-  echo -e "${BLD}Source Code Security Audit${NC}"
+  echo -e "${BLD}VFA Security Audit${NC}"
   echo -e "${DIM}Project  : ${PROJECT_PATH}${NC}"
   echo -e "${DIM}Reports  : ${OUTPUT_DIR}${NC}"
   echo -e "${DIM}Severity : ${SEVERITY}+${NC}"
