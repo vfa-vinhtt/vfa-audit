@@ -99,7 +99,7 @@ Quy tắc phân loại chính:
 - **Secrets** (Gitleaks/Trivy) → `FAIL`. Nếu secret thật từng commit: phải rotate/revoke, không chỉ xóa khỏi code.
 - **CVE**: HIGH/CRITICAL **có** fixed version → `FAIL`; HIGH/CRITICAL **chưa có** bản vá hoặc severity UNKNOWN → `REVIEW_REQUIRED`; MEDIUM/LOW → `WARNING`.
 - **License**: AGPL/GPL/SSPL/BUSL/Commons-Clause/CC-BY-NC/CC-BY-ND → `FAIL` (deny-by-default, cần approval — không có nghĩa là cấm dùng thương mại tuyệt đối); LGPL/MPL/EPL/CDDL/OFL/UNKNOWN/NOASSERTION/Custom/Proprietary → `REVIEW_REQUIRED`.
-- **Font**: metadata ghi non-commercial/personal-use/trial/demo/restricted/proprietary → `FAIL`; không có metadata license hoặc nhắc GPL/SSPL → `REVIEW_REQUIRED`.
+- **Font**: metadata ghi non-commercial/personal-use/trial/demo/restricted/proprietary → `FAIL`; không có metadata license hoặc nhắc GPL/SSPL → `REVIEW_REQUIRED`; **metadata không có flag nào** → `REVIEW_REQUIRED` (metadata sạch không phải bằng chứng license hợp lệ — cần review thủ công).
 
 ### Ví dụ summary.txt
 
@@ -121,7 +121,7 @@ Quy tắc phân loại chính:
 └─────────────────────────────┴────────────┴────────┴────────┴────────┘
 ```
 
-Cột **Status** cho biết kết quả có tin được hay không: `ok` / `findings` (scanner chạy xong), `failed` (scanner lỗi — kết quả **không đầy đủ**), `skipped` (bị bỏ qua).
+Cột **Status** cho biết kết quả có tin được hay không: `ok` / `findings` / `review` (scanner chạy xong), `failed` (scanner lỗi — kết quả **không đầy đủ**), `skipped` (bị bỏ qua). Giá trị `review` ở dòng Font License nghĩa là có font nhưng không có flag xấu — cần review thủ công.
 
 ### Ví dụ summary.json
 
@@ -174,8 +174,8 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
 
 - ExifTool đọc metadata trực tiếp từ font độc lập: `.ttf`, `.otf`, `.woff`, `.woff2`.
 - Script tạo `font-license-exiftool.json` lưu toàn bộ metadata gốc, và `font-sha256.txt` (gồm cả `.eot`) để nhận diện font bị rename.
-- Font → `FAIL` khi metadata có cụm hạn chế: `personal use`, `non-commercial`, `trial`, `demo`, `evaluation`, `restricted`, `proprietary`. Font → `REVIEW_REQUIRED` khi **thiếu metadata license** hoặc nhắc `GPL`/`SSPL` (font copyleft thường có font exception, cần người xem).
-- **Metadata không phải bằng chứng pháp lý** — để kết luận font PASS thật sự cần thêm: file license đi kèm, link nguồn chính thức, proof of purchase, hoặc license grant từ vendor.
+- Font → `FAIL` khi metadata có cụm hạn chế: `personal use`, `non-commercial`, `trial`, `demo`, `evaluation`, `restricted`, `proprietary`. Font → `REVIEW_REQUIRED` trong mọi trường hợp còn lại khi có font: thiếu metadata license, nhắc `GPL`/`SSPL`, hoặc **metadata trông sạch nhưng không có flag nào** — metadata sạch không phải bằng chứng license hợp lệ.
+- **Metadata không phải bằng chứng pháp lý** — script không thể tự kết luận font PASS. Cần review thủ công với: file license đi kèm, link nguồn chính thức, proof of purchase, hoặc license grant từ vendor.
 
 ---
 

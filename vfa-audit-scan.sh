@@ -365,9 +365,11 @@ run_font_license_scan() {
     FONT_STATUS="ok"
     ok "No standalone font files found"
   elif [[ $((FONT_BLOCKER_COUNT + FONT_REVIEW_COUNT)) -eq 0 ]]; then
-    FONT_STATUS="ok"
-    ok "ExifTool: ${FONT_FILE_COUNT} font file(s), no flagged font license metadata"
-    log "${DIM}Metadata alone is not legal proof — keep license files / purchase evidence.${NC}"
+    FONT_STATUS="review"
+    FONT_REVIEW_COUNT=$FONT_FILE_COUNT
+    HAS_REVIEW=1
+    warn "ExifTool: ${FONT_FILE_COUNT} font file(s) found — metadata has no restrictions, but metadata alone cannot confirm license validity (REVIEW_REQUIRED)"
+    log "${DIM}Manual review needed: license file, official source, proof of purchase, or vendor grant.${NC}"
   else
     FONT_STATUS="findings"
     warn "ExifTool: ${FONT_FILE_COUNT} font file(s) — ${FONT_BLOCKER_COUNT} FAIL, ${FONT_REVIEW_COUNT} review required"
