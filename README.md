@@ -143,7 +143,7 @@ Cột **Status** cho biết kết quả có tin được hay không: `ok` / `fin
   },
   "total_findings": 13,
   "tool_errors": 0,
-  "output_dir": "/tmp/vfa_audit/20260612_100000_my-project"
+  "output_dir": "/Users/dev/my-project/20260612_100000_my-project.zip"
 }
 ```
 
@@ -185,7 +185,7 @@ Mỗi lỗi đều ghi rõ **scanner nào hỏng** và **log nào cần xem** (`
 
 | Trường hợp | Thông báo |
 |---|---|
-| Không tạo được thư mục output | `Cannot create output directory: ...` → exit 2 |
+| Không tạo được thư mục output trong `/tmp` | Script tự thử tạo `~/vfa_audit/` (`$HOME`). Nếu vẫn thất bại: `Cannot create output directory: ...` → exit 2 |
 | Tool cài tự động thất bại | `Failed to install <tool>` + layer tương ứng báo `<tool> unavailable — scan NOT performed` |
 | Homebrew không có trên máy | `Homebrew not found — cannot install missing tools` + gợi ý cài thủ công |
 | Gitleaks lỗi (exit > 1) | `Gitleaks failed (exit N) — see gitleaks.log` |

@@ -32,6 +32,7 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PROJECT_PATH="$RUN_DIR"
 OUTPUT_DIR="/tmp/vfa_audit/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
+ZIP_FILE=""
 
 # ── License policy (single place to edit — keep in sync with policy.md §5) ──
 # Block-by-default for closed-source / commercial delivery (needs approval):
@@ -504,7 +505,7 @@ generate_summary() {
       --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg project    "$PROJECT_PATH" \
       --arg status     "$status" \
-      --arg outdir     "$OUTPUT_DIR" \
+      --arg outdir     "$ZIP_FILE" \
       --argjson total         "$total" \
       --argjson fail_total    "$fail_total" \
       --argjson review_total  "$review_total" \
@@ -565,10 +566,19 @@ main() {
   echo ""
   echo -e "${BLD}VFA Security Audit${NC}  ${DIM}v${VERSION}${NC}"
   echo -e "${DIM}Project : ${PROJECT_PATH}${NC}"
-  echo -e "${DIM}Reports : ${OUTPUT_DIR}${NC}"
 
-  mkdir -p "${OUTPUT_DIR}" \
-    || { err "Cannot create output directory: ${OUTPUT_DIR}"; exit 2; }
+  # Try /tmp first; fall back to $HOME/vfa_audit/ if /tmp is not writable.
+  # Using $HOME (not $RUN_DIR) keeps output outside the project tree so scan
+  # tools do not re-scan their own output files.
+  if ! mkdir -p "${OUTPUT_DIR}" 2>/dev/null; then
+    OUTPUT_DIR="${HOME}/vfa_audit/${TIMESTAMP}_$(basename "$PROJECT_PATH")"
+    mkdir -p "${OUTPUT_DIR}" \
+      || { err "Cannot create output directory: ${OUTPUT_DIR}"; exit 2; }
+    log "Note: /tmp unavailable — using ${OUTPUT_DIR}"
+  fi
+
+  ZIP_FILE="${RUN_DIR}/$(basename "$OUTPUT_DIR").zip"
+  echo -e "${DIM}Reports : ${ZIP_FILE}${NC}"
 
   check_tools
   run_secrets_scan
@@ -585,15 +595,14 @@ main() {
   done
 
   # Zip the report into the current working directory, then remove the temp folder.
-  local zip_file="${RUN_DIR}/$(basename "$OUTPUT_DIR").zip"
   if ! cmd_ok zip; then
     warn "zip not found — report kept at: ${OUTPUT_DIR}"
     exit 0
   fi
   log "Archiving report..."
-  if (cd "$(dirname "$OUTPUT_DIR")" && zip -qr "$zip_file" "$(basename "$OUTPUT_DIR")") 2>/dev/null; then
+  if (cd "$(dirname "$OUTPUT_DIR")" && zip -qr "$ZIP_FILE" "$(basename "$OUTPUT_DIR")") 2>/dev/null; then
     rm -rf "$OUTPUT_DIR"
-    ok "Report archived: ${zip_file}"
+    ok "Report archived: ${ZIP_FILE}"
   else
     warn "zip failed — report kept at: ${OUTPUT_DIR}"
   fi
