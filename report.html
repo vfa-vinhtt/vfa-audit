@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Scan Report — securityScan</title>
+<style>
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --bg: #f8f9fa; --card: #fff; --border: #e0e0e0;
+    --text: #2c3e50; --muted: #7f8c8d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); padding: 0 0 40px; }
+  header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 32px 40px; }
+  header h1 { font-size: 1.8rem; font-weight: 700; }
+  header .meta { margin-top: 12px; opacity: .75; font-size: .9rem; line-height: 1.9;
+    overflow-wrap: anywhere; word-break: break-word; }
+  .container { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+  .score-row { display: flex; gap: 24px; margin-bottom: 32px; flex-wrap: wrap; }
+  .score-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 32px; flex: 1; min-width: 200px; text-align: center; }
+  .score-num { font-size: 3rem; font-weight: 800; color: #c0392b; }
+  .score-label { font-size: .85rem; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+  .summary-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; flex: 2; min-width: 300px; }
+  .summary-card h3 { font-size: 1rem; margin-bottom: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .summary-item { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .sev-label { width: 75px; font-weight: 600; font-size: .85rem; }
+  .bar-wrap { flex: 1; height: 8px; background: #f0f0f0; border-radius: 4px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 4px; min-width: 3px; transition: width .5s; }
+  .sev-count { width: 30px; text-align: right; font-weight: 700; font-size: .9rem; }
+  .plugin-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    margin-bottom: 20px; overflow: hidden; }
+  .plugin-title { padding: 16px 24px; cursor: pointer; font-size: 1.05rem; font-weight: 600;
+    background: #fafbfc; border-bottom: 1px solid var(--border); user-select: none;
+    display: flex; justify-content: space-between; align-items: center; }
+  .plugin-title:hover { background: #f0f2f5; }
+  .plugin-count { font-size: .8rem; background: #e8eaf0; padding: 2px 10px; border-radius: 20px;
+    color: var(--muted); font-weight: 500; }
+  .plugin-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .plugin-body.hidden { display: none; }
+  .finding-card { border-radius: 8px; padding: 16px 20px; }
+  .finding-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .badge { color: #fff; font-size: .72rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 4px; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+  .finding-title { font-size: .95rem; font-weight: 600; }
+  .finding-desc { font-size: .88rem; line-height: 1.6; color: #444; margin-bottom: 8px; }
+  .finding-file { font-size: .82rem; color: var(--muted); margin-bottom: 6px; }
+  .also-detected { font-size: .8rem; color: #8e44ad; background: #f3eafb; border: 1px solid #e1cdf0;
+    padding: 2px 10px; border-radius: 6px; display: inline-block; margin: 0 0 8px; font-weight: 500; }
+  .finding-rec { font-size: .85rem; color: #2c7c5c; margin: 8px 0; }
+  .evidence { margin-top: 8px; background: #1e1e2e; border-radius: 6px; padding: 10px 14px; }
+  .evidence strong { color: #a0a0c0; font-size: .78rem; display: block; margin-bottom: 4px; }
+  .evidence pre { color: #cdd6f4; font-size: .82rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { background: #edf2f7; color: #718096; font-size: .72rem; padding: 1px 8px; border-radius: 20px; }
+  .proj-info { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 28px; margin-bottom: 28px; }
+  .proj-info h3 { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+  .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .proj-item { min-width: 0; }  /* allow the cell to shrink so long values wrap, not overflow */
+  .proj-item strong { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 2px; }
+  .proj-item span { font-size: .9rem; font-weight: 500; display: block;
+    overflow-wrap: anywhere; word-break: break-word; }
+  .section-summary { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 28px; margin-bottom: 28px; }
+  .section-summary h3 { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+  .sec-table-wrap { overflow-x: auto; }
+  .sec-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  .sec-table th, .sec-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .sec-table th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; text-align: left; }
+  .sec-table th.num, .sec-table td.num { text-align: center; }
+  .sec-table .sec-name { font-weight: 600; padding-left: 12px; white-space: nowrap; }
+  .sec-table .zero { color: #cfd6dd; }
+  .sec-table .sec-total { font-weight: 700; }
+  .sec-table tbody tr.sec-row { cursor: pointer; }
+  .sec-table tbody tr.sec-row:hover { background: #f0f2f5; }
+  .sec-table .jump { color: #b0b7c0; font-size: .8rem; opacity: 0; transition: opacity .15s; }
+  .sec-table tbody tr.sec-row:hover .jump { opacity: 1; }
+  .plugin-section { scroll-margin-top: 12px; transition: box-shadow .3s ease; }
+  .plugin-section.flash { box-shadow: 0 0 0 3px rgba(142, 68, 173, .55); }
+  .subgroup { border: 1px solid #e9ecef; border-radius: 8px; margin-top: 10px; }
+  .subgroup .plugin-title { background: #f8f9fa; font-size: .95rem; }
+  footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 40px; }
+  @media (max-width: 600px) {
+    .score-row { flex-direction: column; }
+    header { padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔒 Security Scan Report</h1>
+  <div class="meta">
+    <strong>Project:</strong> securityScan&nbsp;&nbsp;
+    <strong>Generated:</strong> 2026-06-15 08:51:38+07:00<br>
+    <strong>Repo:</strong> N/A&nbsp;&nbsp;
+    <strong>Branch:</strong> N/A<br>
+    <strong>Languages:</strong> Python&nbsp;&nbsp;
+    <strong>Framework:</strong> N/A&nbsp;&nbsp;
+    <strong>Environment:</strong> Windows 11 (build 10.0.26200)
+  </div>
+</header>
+
+<div class="container">
+  <div class="score-row">
+    <div class="score-card">
+      <div class="score-num">34</div>
+      <div class="score-label">Security Score / 100 &middot; Grade F</div>
+    </div>
+    <div class="summary-card">
+      <h3>Findings by Severity</h3>
+      
+        <div class="summary-item">
+            <span class="sev-label" style="color:#c0392b">CRITICAL</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:5%; background:#c0392b"></div>
+            </div>
+            <span class="sev-count" style="color:#c0392b">1</span>
+        </div>
+        <div class="summary-item">
+            <span class="sev-label" style="color:#e67e22">HIGH</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:25%; background:#e67e22"></div>
+            </div>
+            <span class="sev-count" style="color:#e67e22">5</span>
+        </div>
+        <div class="summary-item">
+            <span class="sev-label" style="color:#f39c12">MEDIUM</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:5%; background:#f39c12"></div>
+            </div>
+            <span class="sev-count" style="color:#f39c12">1</span>
+        </div>
+        <div class="summary-item">
+            <span class="sev-label" style="color:#f1c40f">WARNING</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:0%; background:#f1c40f"></div>
+            </div>
+            <span class="sev-count" style="color:#f1c40f">0</span>
+        </div>
+        <div class="summary-item">
+            <span class="sev-label" style="color:#2980b9">LOW</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:0%; background:#2980b9"></div>
+            </div>
+            <span class="sev-count" style="color:#2980b9">0</span>
+        </div>
+        <div class="summary-item">
+            <span class="sev-label" style="color:#7f8c8d">INFO</span>
+            <div class="bar-wrap">
+                <div class="bar" style="width:30%; background:#7f8c8d"></div>
+            </div>
+            <span class="sev-count" style="color:#7f8c8d">6</span>
+        </div>
+    </div>
+  </div>
+
+  <div class="proj-info">
+    <h3>Project Information</h3>
+    <div class="proj-grid">
+      <div class="proj-item"><strong>Project Name</strong><span>securityScan</span></div>
+      <div class="proj-item"><strong>Environment</strong><span>Windows 11 (build 10.0.26200)</span></div>
+      <div class="proj-item"><strong>Scanned Path</strong><span>C:\Users\uyenp\Downloads\securityScan\securityScan</span></div>
+      <div class="proj-item"><strong>Languages</strong><span>Python</span></div>
+      <div class="proj-item"><strong>Framework</strong><span>N/A</span></div>
+      <div class="proj-item"><strong>Git Branch</strong><span>N/A</span></div>
+      <div class="proj-item"><strong>Last Commit</strong><span>N/A</span></div>
+      <div class="proj-item"><strong>Total Files Scanned</strong><span>36</span></div>
+    </div>
+  </div>
+
+  
+  <div class="section-summary">
+    <h3>Security Summary by Section</h3>
+    <div class="sec-table-wrap">
+      <table class="sec-table">
+        <thead><tr><th>Section</th><th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Warning</th><th class="num">Low</th><th class="num">Info</th><th class="num">Total</th></tr></thead>
+        <tbody>
+        <tr class="sec-row" style="border-left:4px solid #c0392b" onclick="goToSection('sec-environment-gitignore')" title="Jump to Environment &amp; Gitignore">
+          <td class="sec-name">Environment &amp; Gitignore <span class="jump">↧</span></td>
+          <td class="num" style="color:#c0392b;font-weight:700">1</td><td class="num zero">0</td><td class="num" style="color:#f39c12;font-weight:700">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#7f8c8d;font-weight:700">1</td>
+          <td class="num sec-total">3</td>
+        </tr>
+        <tr class="sec-row" style="border-left:4px solid #e67e22" onclick="goToSection('sec-dependency-checker')" title="Jump to Dependency Checker">
+          <td class="sec-name">Dependency Checker <span class="jump">↧</span></td>
+          <td class="num zero">0</td><td class="num" style="color:#e67e22;font-weight:700">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#7f8c8d;font-weight:700">2</td>
+          <td class="num sec-total">3</td>
+        </tr>
+        <tr class="sec-row" style="border-left:4px solid #e67e22" onclick="goToSection('sec-secret-checker')" title="Jump to Secret Checker">
+          <td class="sec-name">Secret Checker <span class="jump">↧</span></td>
+          <td class="num zero">0</td><td class="num" style="color:#e67e22;font-weight:700">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#7f8c8d;font-weight:700">1</td>
+          <td class="num sec-total">3</td>
+        </tr>
+        <tr class="sec-row" style="border-left:4px solid #e67e22" onclick="goToSection('sec-license-checker')" title="Jump to License Checker">
+          <td class="sec-name">License Checker <span class="jump">↧</span></td>
+          <td class="num zero">0</td><td class="num" style="color:#e67e22;font-weight:700">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td>
+          <td class="num sec-total">2</td>
+        </tr>
+        <tr class="sec-row" style="border-left:4px solid #7f8c8d" onclick="goToSection('sec-asset-checker')" title="Jump to Asset Checker">
+          <td class="sec-name">Asset Checker <span class="jump">↧</span></td>
+          <td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#7f8c8d;font-weight:700">1</td>
+          <td class="num sec-total">1</td>
+        </tr>
+        <tr class="sec-row" style="border-left:4px solid #7f8c8d" onclick="goToSection('sec-config-checker')" title="Jump to Config Checker">
+          <td class="sec-name">Config Checker <span class="jump">↧</span></td>
+          <td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#7f8c8d;font-weight:700">1</td>
+          <td class="num sec-total">1</td>
+        </tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  
+        <section class="plugin-section" id="sec-environment-gitignore">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ Environment & Gitignore
+                <span class="plugin-count">3 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Gitignore
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #c0392b; background: #fdf0ef;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#c0392b">CRITICAL</span>
+                        <strong class="finding-title">No .gitignore file found</strong>
+                    </div>
+                    <p class="finding-desc">The project has no .gitignore file. Sensitive files like .env, private keys, and secrets could be accidentally committed.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Create a .gitignore file and add at minimum:
+  .env
+  .env.*
+  !.env.example
+  *.pem
+  *.key
+  *.log
+  node_modules/</em></div>
+                    
+                    <div class="tags"><span class="tag">gitignore</span> <span class="tag">critical</span></div>
+                </div>
+                </div>
+            </section>
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Env Files
+                    <span class="plugin-count">2 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #f39c12; background: #fefaec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#f39c12">MEDIUM</span>
+                        <strong class="finding-title">Environment variables accessed but no .env file found</strong>
+                    </div>
+                    <p class="finding-desc">Source code accesses environment variables (os.getenv, process.env, etc.) but no .env file or .env.example exists.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Create a .env.example listing all required variable names and document their purpose for other developers.</em></div>
+                    
+                    <div class="tags"><span class="tag">env</span> <span class="tag">documentation</span></div>
+                </div>
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">No .env files found</strong>
+                    </div>
+                    <p class="finding-desc">No .env files were detected. If environment variables are used, ensure a .env.example template exists for onboarding.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Create a .env.example with all required variable names (no real values) and commit it to source control.</em></div>
+                    
+                    <div class="tags"><span class="tag">env</span> <span class="tag">documentation</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+        <section class="plugin-section" id="sec-dependency-checker">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ Dependency Checker
+                <span class="plugin-count">3 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Pip Audit
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #e67e22; background: #fef5ec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#e67e22">HIGH</span>
+                        <strong class="finding-title">Python vulnerability: pip@26.1.1</strong>
+                    </div>
+                    <p class="finding-desc">PYSEC-2026-196: pip would treat console_scripts and gui_scripts as paths instead of file names without sanitizing the resolved absolute path to the installation directory, leading to entry points being installed outs</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Upgrade to a fixed version: [&#x27;26.1.2&#x27;]. See: https://osv.dev</em></div>
+                    
+                    <div class="tags"><span class="tag">dependency</span> <span class="tag">vulnerability</span> <span class="tag">python</span></div>
+                </div>
+                </div>
+            </section>
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ General
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">Found 1 dependencies across 1 manifest(s)</strong>
+                    </div>
+                    <p class="finding-desc">Ecosystems detected: python</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Run dependency scans regularly (CI/CD) to catch new vulnerabilities.</em></div>
+                    
+                    <div class="tags"><span class="tag">dependency</span> <span class="tag">summary</span></div>
+                </div>
+                </div>
+            </section>
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Osv
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">OSV scan completed - no known vulnerabilities found</strong>
+                    </div>
+                    <p class="finding-desc">OSV checked 1 dependency version(s) and found no known CVEs.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Re-run regularly; new advisories are published continuously.</em></div>
+                    
+                    <div class="tags"><span class="tag">dependency</span> <span class="tag">osv</span> <span class="tag">scan-summary</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+        <section class="plugin-section" id="sec-license-checker">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ License Checker
+                <span class="plugin-count">2 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ General
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #e67e22; background: #fef5ec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#e67e22">HIGH</span>
+                        <strong class="finding-title">No LICENSE file in project root</strong>
+                    </div>
+                    <p class="finding-desc">A project without a license is &#x27;All Rights Reserved&#x27; by default.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Add a LICENSE file (e.g., MIT, Apache-2.0) to the project root.</em></div>
+                    
+                    <div class="tags"></div>
+                </div>
+                </div>
+            </section>
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Pip-Licenses
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #e67e22; background: #fef5ec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#e67e22">HIGH</span>
+                        <strong class="finding-title">Non-compliant license: certifi (Mozilla Public License 2.0) - weak-copyleft</strong>
+                    </div>
+                    <p class="finding-desc">Package &#x27;certifi&#x27; uses license &#x27;Mozilla Public License 2.0&#x27; which is classified as &#x27;weak-copyleft&#x27;.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Review your project&#x27;s license policy and consider replacing this dependency.</em></div>
+                    
+                    <div class="tags"><span class="tag">license</span> <span class="tag">dependency</span> <span class="tag">python</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+        <section class="plugin-section" id="sec-secret-checker">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ Secret Checker
+                <span class="plugin-count">3 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Gitleaks
+                    <span class="plugin-count">2 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #e67e22; background: #fef5ec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#e67e22">HIGH</span>
+                        <strong class="finding-title">Gitleaks: Detected a Generic API Key, potentially exposing access to various services and sensitive operations.</strong>
+                    </div>
+                    <p class="finding-desc">Secret detected in C:/Users/uyenp/Downloads/securityScan/securityScan/README.md at line 4.</p>
+                    <p class="finding-file">📄 <code>README.md:4</code></p>
+                    
+                    <div class="finding-rec">💡 <em>Rule &#x27;generic-api-key&#x27;. Rotate the secret and remove it from git history.</em></div>
+                    <div class="evidence"><strong>Evidence:</strong><pre><code>vul***REDACTED***us</code></pre></div>
+                    <div class="tags"><span class="tag">secret</span> <span class="tag">gitleaks</span> <span class="tag">generic-api-key</span></div>
+                </div>
+                <div class="finding-card" style="border-left: 4px solid #e67e22; background: #fef5ec;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#e67e22">HIGH</span>
+                        <strong class="finding-title">Gitleaks: Identified a Private Key, which may compromise cryptographic security and sensitive data encryption.</strong>
+                    </div>
+                    <p class="finding-desc">Secret detected in C:/Users/uyenp/Downloads/securityScan/securityScan/scanner/plugins/secret_checker.py at line 77.</p>
+                    <p class="finding-file">📄 <code>scanner/plugins/secret_checker.py:77</code></p>
+                    
+                    <div class="finding-rec">💡 <em>Rule &#x27;private-key&#x27;. Rotate the secret and remove it from git history.</em></div>
+                    <div class="evidence"><strong>Evidence:</strong><pre><code>---***REDACTED***--</code></pre></div>
+                    <div class="tags"><span class="tag">secret</span> <span class="tag">gitleaks</span> <span class="tag">private-key</span></div>
+                </div>
+                </div>
+            </section>
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ Trufflehog
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">trufflehog scan completed - no secrets found</strong>
+                    </div>
+                    <p class="finding-desc">The &#x27;trufflehog&#x27; secret scanner ran successfully and reported no secrets.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>No action needed; the scanner executed and found nothing.</em></div>
+                    
+                    <div class="tags"><span class="tag">secret</span> <span class="tag">trufflehog</span> <span class="tag">scan-summary</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+        <section class="plugin-section" id="sec-asset-checker">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ Asset Checker
+                <span class="plugin-count">1 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ General
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">No font or image assets detected</strong>
+                    </div>
+                    <p class="finding-desc">No font or image files were found in the project.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>If assets are added in future, ensure they have proper licenses.</em></div>
+                    
+                    <div class="tags"><span class="tag">asset</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+        <section class="plugin-section" id="sec-config-checker">
+            <h2 class="plugin-title" onclick="toggleSection(this)">
+                ▾ Config Checker
+                <span class="plugin-count">1 finding(s)</span>
+            </h2>
+            <div class="plugin-body">
+                
+            <section class="plugin-section subgroup">
+                <h3 class="plugin-title subgroup-title" onclick="toggleSection(this)">
+                    ▾ General
+                    <span class="plugin-count">1 finding(s)</span>
+                </h3>
+                <div class="plugin-body">
+                    
+                <div class="finding-card" style="border-left: 4px solid #7f8c8d; background: #f4f6f7;">
+                    <div class="finding-header">
+                        <span class="badge" style="background:#7f8c8d">INFO</span>
+                        <strong class="finding-title">No insecure configuration patterns detected</strong>
+                    </div>
+                    <p class="finding-desc">Configuration files passed the automated security checks.</p>
+                    
+                    
+                    <div class="finding-rec">💡 <em>Continue reviewing configs manually before deployment. Ensure production configs use environment variables for all secrets.</em></div>
+                    
+                    <div class="tags"><span class="tag">config</span></div>
+                </div>
+                </div>
+            </section>
+            </div>
+        </section>
+</div>
+
+<footer>
+  Generated by Security Scanner &bull; 2026-06-15 08:51:38+07:00 &bull; 13 finding(s)
+</footer>
+
+<script>
+function toggleSection(el) {
+  const body = el.nextElementSibling;
+  body.classList.toggle('hidden');
+  el.textContent = el.textContent.startsWith('▾')
+    ? el.textContent.replace('▾', '▸')
+    : el.textContent.replace('▸', '▾');
+}
+function goToSection(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const title = el.querySelector('.plugin-title');
+  const body = el.querySelector('.plugin-body');
+  // Expand the target section if it was collapsed (e.g. auto-collapsed INFO-only).
+  if (title && body && body.classList.contains('hidden')) toggleSection(title);
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  el.classList.add('flash');
+  setTimeout(function() { el.classList.remove('flash'); }, 1500);
+}
+// Auto-collapse INFO sections
+document.querySelectorAll('.plugin-title').forEach(function(el) {
+  const findings = el.nextElementSibling.querySelectorAll('.finding-card');
+  let onlyInfo = true;
+  findings.forEach(function(f) {
+    if (!f.querySelector('.badge[style*="#7f8c8d"]')) onlyInfo = false;
+  });
+  if (onlyInfo && findings.length > 0) toggleSection(el);
+});
+</script>
+</body>
+</html>

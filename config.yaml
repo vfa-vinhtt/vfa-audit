@@ -1,0 +1,139 @@
+
+# Security Scanner Configuration
+
+# Pre-scan requirements check: before scanning, verify the external CLI tools that
+# the enabled features need (scoped to the project's detected languages) are
+# installed. By default the scan STOPS if anything is missing so no check is
+# silently skipped; it prints how to install each missing tool.
+preflight:
+  enabled: true    # run the requirements check before scanning
+  strict: true     # stop the scan when a required tool is missing (recommended).
+                   # Set to false to warn and scan anyway. Per-run overrides:
+                   #   --no-strict-requirements  (warn and continue this run)
+                   #   --skip-requirements-check (skip the check entirely)
+  auto_install: true  # attempt to auto-install missing tools before scanning.
+                       # Runs pip/go/npm/dotnet/gem installers; standalone binaries
+                       # (gitleaks, trufflehog) are installed via an OS package
+                       # manager (see binary_installer). Per-run override: --install-missing.
+                       # Language runtimes (npm, dotnet, composer, go) are never
+                       # auto-installed - those are reported with manual instructions.
+  binary_installer: auto  # package manager for standalone binaries (gitleaks/trufflehog).
+                          # "auto" picks the first available of scoop/brew/winget/choco.
+                          # Force one with: scoop | winget | choco | brew. "none" disables.
+  bootstrap_runtimes: true  # if a tool can only be installed via `go install` and Go is
+                            # missing, install Go first via a signed package manager
+                            # (winget/brew/scoop/choco) - never via remote scripts.
+                            # Set false to keep Go a manual prerequisite.
+  # Tools listed here are treated as optional: if missing they are reported as a
+  # [WARN] and skipped, but they never stop a strict scan. Use this for tools whose
+  # coverage is redundant (e.g. govulncheck overlaps OSV for Go).
+  optional: []
+    # - govulncheck
+    # - go-licenses
+
+# Global file scanner settings
+file_scanner:
+  # Common, language-agnostic dirs to skip. Per-language dirs (node_modules, vendor,
+  # target, Pods, bin/obj, venv, ...) are declared by each adapter's IGNORE_DIRS and
+  # merged in automatically. VCS dirs (.git/.svn/.hg) are always skipped.
+  ignore_dirs:
+    - "logs"
+    - "tmp"
+    - "dist"
+    - "build"
+    - "out"
+    - "coverage"
+    - ".coverage"
+    - ".idea"
+    - ".vscode"
+    - ".terraform"
+  ignore_patterns:
+    - "*.log"
+    - "package-lock.json" # Often noisy for secret scanning
+
+# Plugin-specific configurations
+plugins:
+  # Secret Checker config
+  secret_checker:
+    enabled: true
+    # Extra directories to exclude from gitleaks/trufflehog (they traverse the whole
+    # tree themselves). The file scanner's ignored dirs - node_modules, vendor, venv,
+    # target, Pods, dist/build, etc. - are excluded automatically; list any extras here.
+    exclude_dirs: []
+    # Every enabled tool below is run and the results are merged (each appears under
+    # its own sub-group, e.g. secret_checker:gitleaks). python_regex is built-in and
+    # needs no install. gitleaks/trufflehog are external CLIs - if you enable one, the
+    # pre-scan requirements check will require it to be installed (strict mode stops
+    # the scan otherwise).
+    tool_config:
+      python_regex:
+        enabled: false  # built-in regex-based secret scanning for Python (no installation needed)
+      gitleaks:
+        enabled: true   # set true to also run gitleaks (must be installed + on PATH)
+        # https://github.com/gitleaks/gitleaks
+      trufflehog:
+        enabled: true   # set true to also run trufflehog (must be installed + on PATH)
+        # https://github.com/trufflesecurity/trufflehog
+
+  # Dependency Checker config
+  dependency_checker:
+    enabled: true
+    # Granular controls for different dependency scanning tools
+    tools:
+      # OSV API check for vulnerabilities across multiple ecosystems
+      osv:
+        enabled: true
+      # Use language-specific audit tools (e.g., 'npm audit', 'pip-audit')
+      project_audit:
+        enabled: true
+  
+  # Env Checker config
+  env_checker:
+    enabled: true
+
+  # License Checker config
+  license_checker:
+    enabled: true
+    tools:
+      content: true
+      project_tool: true
+    deny:
+      - "GPL-2.0-only"
+      - "AGPL-3.0-only"
+    allow_classifications:
+      - "permissive"
+
+  # PII Checker config
+  pii_checker:
+    enabled: false  # PII scanning can be noisy, so it's off by default. Enable if you want to
+    # min_confidence: "high" (default) reports only validated (card/IBAN) or
+    # context-confirmed PII and stays quiet on bare emails/phones/IPs. Set "low" to
+    # report every match (noisier).
+    min_confidence: high
+    # A file with this many bare emails/phones is flagged as a likely real dataset
+    # (CSV/SQL dump) even in high-confidence mode.
+    bulk_threshold: 6
+    # Pattern names to skip entirely (e.g. "IPv4 Address (non-private)", "Email Address").
+    disabled_categories: []
+    # Regexes for values to never flag (your own known-safe/synthetic data).
+    allowlist: []
+
+  # Asset Checker config
+  asset_checker:
+    enabled: true
+    tools:
+      font_metadata: true       # read embedded font license + fsType embedding rights (pip: fonttools)
+      image_metadata: true      # read image EXIF/IPTC/XMP copyright & usage terms (pip: Pillow)
+      ocr_text_in_image: true  # OCR images to flag rendered text for MANUAL font-license review.
+                                # The font itself cannot be auto-identified. Needs tesseract + pytesseract.
+
+  # Gitignore Checker
+  gitignore_checker:
+    enabled: true
+  
+  # Config Checker
+  config_checker:
+    enabled: true
+
+# Adapter-specific configurations (if any needed in future)
+adapters: {}
