@@ -16,7 +16,7 @@ pyinstaller scripts\vfa_audit.spec ^
     --clean ^
     --noconfirm
 
-for /f "delims=" %%f in ('dir /b "dist\vfa-audit_v*.exe" 2^>nul') do set BINARY=dist\%%f
+set BINARY=dist\vfa-audit.exe
 echo.
 echo =^> Build complete: %BINARY%
 echo.

@@ -1,16 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for vfa-audit
 # Build: pyinstaller scripts/vfa_audit.spec --distpath dist --workpath dist/work --clean
+#
+# Produces a single-file binary named `vfa-audit` (vfa-audit.exe on Windows) in dist/.
+# The version is NOT baked into the filename — it is reported by `vfa-audit --version`
+# and in every report, sourced from scanner/__init__.py __version__. CI renames the
+# binary to per-OS asset names (vfa-audit-windows.exe, ...) when publishing a release.
 
-import re
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
-
-_ver_match = re.search(r'^VERSION\s*=\s*"([^"]+)"', (ROOT / 'main.py').read_text(), re.MULTILINE)
-_version = _ver_match.group(1) if _ver_match else "0.0.0"
-_binary_name = f"vfa-audit_v{_version}"
 
 a = Analysis(
     [str(ROOT / 'main.py')],
@@ -65,7 +65,7 @@ exe = EXE(
     a.scripts,
     a.binaries,
     a.datas,
-    name=_binary_name,
+    name="vfa-audit",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
