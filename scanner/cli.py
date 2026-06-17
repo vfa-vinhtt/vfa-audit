@@ -1,9 +1,13 @@
 
 import argparse
+import datetime
 import importlib
 import pkgutil
 import platform
+import re
+import shutil
 import sys
+import zipfile
 from importlib import resources
 from pathlib import Path
 
@@ -38,27 +42,56 @@ from scanner.core.report_engine import ReportEngine
 from scanner.plugins.base_plugin import BasePlugin, Finding
 
 
+# When frozen by PyInstaller, pkgutil can't enumerate the bundled packages, so fall
+# back to these known module lists. (No effect when running from source / installed.)
+_KNOWN_PLUGINS = [
+    'pii_checker', 'dependency_checker', 'env_checker', 'config_checker',
+    'asset_checker', 'gitignore_checker', 'secret_checker', 'license_checker',
+]
+_KNOWN_ADAPTERS = ['node', 'python', 'go', 'java', 'dotnet', 'swift', 'php']
+
+
+def _iter_submodule_names(package) -> list[str]:
+    """Return submodule names for a package, with a PyInstaller frozen fallback."""
+    names = [name for _, name, _ in pkgutil.iter_modules(package.__path__)]
+    if not names and getattr(sys, 'frozen', False):
+        _known = {
+            'scanner.plugins': _KNOWN_PLUGINS,
+            'scanner.adapters': _KNOWN_ADAPTERS,
+        }
+        names = _known.get(package.__name__, [])
+    return names
+
+
 def load_config(cli_config: str | None) -> dict:
     """Resolve and load the YAML configuration.
 
     Precedence:
-      1. an explicit ``--config PATH`` (warn + use defaults if it doesn't exist),
+      1. an explicit ``--config PATH`` (warn + fall through if it doesn't exist),
       2. a ``config.yaml`` in the current working directory,
-      3. the default config bundled inside the installed package.
+      3. the PyInstaller-bundled ``config.yaml`` (``sys._MEIPASS``) when frozen,
+      4. the default config bundled inside the installed package (``default_config.yaml``).
 
-    This lets the installed ``vfa-audit`` command work from any directory
-    while still honouring a project-local ``config.yaml`` when present.
+    This keeps the tool working from a source checkout, as an installed ``vfa-audit``
+    command (run from any directory), and as a standalone PyInstaller binary.
     """
+    def _read(p: Path) -> dict:
+        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
     if cli_config:
         p = Path(cli_config).resolve()
         if p.exists():
-            return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            return _read(p)
         print(f"Warning: config file '{p}' not found; using defaults.", file=sys.stderr)
-        return {}
 
     local = Path("config.yaml")
     if local.exists():
-        return yaml.safe_load(local.read_text(encoding="utf-8")) or {}
+        return _read(local)
+
+    if getattr(sys, "frozen", False):
+        bundled = Path(sys._MEIPASS) / "config.yaml"
+        if bundled.exists():
+            return _read(bundled)
 
     try:
         text = resources.files("scanner").joinpath("default_config.yaml").read_text(encoding="utf-8")
@@ -74,7 +107,7 @@ def discover_and_load_plugins(config: dict) -> list[BasePlugin]:
     plugins = []
     plugin_config = config.get("plugins", {})
 
-    for _, name, _ in pkgutil.iter_modules(scanner.plugins.__path__):
+    for name in _iter_submodule_names(scanner.plugins):
         if name != "base_plugin":
             try:
                 module = importlib.import_module(f"scanner.plugins.{name}")
@@ -96,7 +129,7 @@ def collect_adapter_ignore_dirs() -> set:
     from scanner.adapters.base_adapter import BaseAdapter
 
     dirs: set = set()
-    for _, name, _ in pkgutil.iter_modules(scanner.adapters.__path__):
+    for name in _iter_submodule_names(scanner.adapters):
         if name == "base_adapter":
             continue
         try:
@@ -117,7 +150,7 @@ def discover_adapter_instances(root: Path, config: dict) -> list:
     adapter_instances = []
     adapter_config = config.get("adapters", {})
 
-    for _, name, _ in pkgutil.iter_modules(scanner.adapters.__path__):
+    for name in _iter_submodule_names(scanner.adapters):
         if name != "base_adapter":
             try:
                 module = importlib.import_module(f"scanner.adapters.{name}")
@@ -148,8 +181,11 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("path", nargs="?", default=".", help="Path to the project to scan. Defaults to current directory.")
     parser.add_argument("--config", default=None, help="Path to the configuration file (defaults to ./config.yaml, then the bundled default).")
-    parser.add_argument("-o", "--output", default="report", help="Basename for the output reports (e.g., 'report' -> report.json, report.md).")
-    parser.add_argument("--format", choices=["json", "md", "html", "console"], default="console", help="Output format.")
+    parser.add_argument("-o", "--output", default=None, help="Output basename or directory. Defaults to '<YYYYMMDD_HHmm>_<project-name>' under './report'.")
+    parser.add_argument("--format", choices=["json", "md", "html", "console", "policy"], default="json",
+                        help="Output format. 'policy' writes blockers/review-required/warnings JSON files into a directory.")
+    parser.add_argument("--zip", action="store_true",
+                        help="Compress the generated output (directory for 'policy', file otherwise) into a zip archive.")
     parser.add_argument("--strict-requirements", action="store_true",
                         help="Force-stop the scan if a required external tool is missing (this is the default).")
     parser.add_argument("--no-strict-requirements", action="store_true",
@@ -199,6 +235,25 @@ def main():
 
     project_info["languages"] = file_scanner.detect_language(root)
 
+    # Resolve output basename early (needed to exclude own report files from scan).
+    _timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    _project_slug = re.sub(r"[^\w\-]", "_", project_info.get("project_name", "project"))
+    _auto_stem = f"{_timestamp}_{_project_slug}"
+
+    # Default output: <tool_dir>/report/<timestamp>_<project>. Tool dir is the
+    # directory containing the frozen binary (sys.executable when PyInstaller) or the
+    # current working directory when running from source / as an installed command.
+    _tool_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
+    _default_output_dir = _tool_dir / "report"
+
+    if args.output is None:
+        output_basename = _default_output_dir / _auto_stem
+    else:
+        _out = Path(args.output)
+        if _out.is_dir():
+            output_basename = _out / _auto_stem
+        else:
+            output_basename = _out
 
     # 4. Scan files
     # Parse .gitignore so plugins (env_checker, gitignore_checker) can reason about
@@ -209,7 +264,7 @@ def main():
 
     # Don't let the scanner ingest its own report output if it lives in the scan
     # tree (otherwise it re-flags example emails/patterns embedded in the report).
-    _own_reports = {Path(args.output).with_suffix(s).resolve() for s in (".json", ".md", ".html")}
+    _own_reports = {output_basename.with_suffix(s).resolve() for s in (".json", ".md", ".html")}
     all_files = [f for f in all_files if f.resolve() not in _own_reports]
     asset_files = [f for f in asset_files if f.resolve() not in _own_reports]
 
@@ -260,17 +315,29 @@ def main():
         else:
             strict = preflight_cfg.get("strict", True)
 
-        missing = print_requirements_report(
+        missing, version_mismatches = print_requirements_report(
             collect_requirements(config, adapter_instances), strict=strict
         )
 
+        _installer_kwargs = dict(
+            binary_installer=preflight_cfg.get("binary_installer", "auto"),
+            bootstrap_runtimes=preflight_cfg.get("bootstrap_runtimes", True),
+        )
+
+        # Auto-upgrade tools that are installed but at the wrong version — always,
+        # no flag needed. pip/go/npm install with a pinned version spec upgrades
+        # or downgrades to the exact pinned release.
+        if version_mismatches:
+            still_wrong = attempt_auto_install(version_mismatches, **_installer_kwargs)
+            if still_wrong:
+                names = ", ".join(r.command for r in still_wrong)
+                print(f"  Could not upgrade: {names} — scan continues with installed version.")
+            else:
+                print("  All tools upgraded to pinned versions.")
+
         # Opt-in auto-install of missing tools, then re-check what remains.
         if missing and (args.install_missing or preflight_cfg.get("auto_install", False)):
-            missing = attempt_auto_install(
-                missing,
-                binary_installer=preflight_cfg.get("binary_installer", "auto"),
-                bootstrap_runtimes=preflight_cfg.get("bootstrap_runtimes", True),
-            )
+            missing = attempt_auto_install(missing, **_installer_kwargs)
             if missing:
                 print(f"\n{len(missing)} tool(s) still missing after auto-install.")
             else:
@@ -295,29 +362,63 @@ def main():
         except Exception as e:
             print(f"Error running plugin {plugin.name}: {e}", file=sys.stderr)
 
-    # 7. Generate report
-    report_engine = ReportEngine(all_findings, project_info)
+    # 7. Collect tool versions for the info section of the report.
+    from scanner.core.requirements import collect_tool_info
+    tool_info = collect_tool_info()
 
-    output_basename = Path(args.output)
+    # 8. Generate report
+    report_engine = ReportEngine(all_findings, project_info, tool_info, scanner_version=__version__)
+
     output_basename.parent.mkdir(parents=True, exist_ok=True)
 
+
+    _zip_source: Path | None = None
 
     if args.format == "console":
         report_engine.print_summary()
     elif args.format == "json":
-        report_engine.save_json(output_basename.with_suffix(".json"))
-        print(f"JSON report saved to {output_basename.with_suffix('.json')}")
+        p = output_basename.with_suffix(".json")
+        report_engine.save_json(p)
+        print(f"JSON report saved to {p}")
+        _zip_source = p
     elif args.format == "md":
-        report_engine.save_markdown(output_basename.with_suffix(".md"))
-        print(f"Markdown report saved to {output_basename.with_suffix('.md')}")
+        p = output_basename.with_suffix(".md")
+        report_engine.save_markdown(p)
+        print(f"Markdown report saved to {p}")
+        _zip_source = p
     elif args.format == "html":
-        report_engine.save_html(output_basename.with_suffix(".html"))
-        print(f"HTML report saved to {output_basename.with_suffix('.html')}")
+        p = output_basename.with_suffix(".html")
+        report_engine.save_html(p)
+        print(f"HTML report saved to {p}")
+        _zip_source = p
+    elif args.format == "policy":
+        policy_dir = output_basename.with_suffix("")
+        summary = report_engine.save_policy_report(policy_dir)
+        status = summary["status"]
+        print(f"Policy report saved to {policy_dir}/")
+        print(f"  blockers.json        : {summary['counts']['blockers']} finding(s)")
+        print(f"  review-required.json : {summary['counts']['review_required']} finding(s)")
+        print(f"  warnings.json        : {summary['counts']['warnings']} finding(s)")
+        print(f"  status               : {status}")
+        _zip_source = policy_dir
+
+    if args.zip and _zip_source:
+        if _zip_source.is_dir():
+            zip_base = str(_zip_source)
+            shutil.make_archive(zip_base, "zip", _zip_source.parent, _zip_source.name)
+            print(f"Zipped to {zip_base}.zip")
+        elif _zip_source.is_file():
+            zip_path = output_basename.with_suffix(".zip")
+            with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(_zip_source, _zip_source.name)
+            print(f"Zipped to {zip_path}")
+    elif args.zip:
+        print("Note: --zip has no effect for console output.", file=sys.stderr)
 
     print(f"Scan complete. Found {len(all_findings)} issues.")
 
     if any(f.severity in ("CRITICAL", "HIGH") for f in all_findings):
-        sys.exit(1) # Exit with error code if critical/high findings are present
+        sys.exit(1)  # Exit with error code if critical/high findings are present
 
 
 if __name__ == "__main__":

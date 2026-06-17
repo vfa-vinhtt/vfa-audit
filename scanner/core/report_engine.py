@@ -38,10 +38,12 @@ def resolve_group(plugin: str) -> tuple:
 
 
 class ReportEngine:
-    def __init__(self, findings: List[Finding], project_info: dict):
+    def __init__(self, findings: List[Finding], project_info: dict, tool_info: List[Dict[str, Any]] = None, scanner_version: str = None):
         ordered = sorted(findings, key=lambda f: f.severity.order())
         self.findings = self._dedupe(ordered)
         self.project_info = project_info
+        self.tool_info = tool_info or []
+        self.scanner_version = scanner_version
         # Local timezone, no microseconds, space separator (still ISO-8601, e.g.
         # "2026-06-14 14:14:29+07:00"). astimezone() on a naive now() attaches the
         # machine's local tzinfo so the offset is shown.
@@ -191,6 +193,7 @@ class ReportEngine:
             "score": score,
             "grade": self._grade(score),
             "project": self.project_info,
+            "info": {"scanner_version": self.scanner_version, "tools": self.tool_info},
             "summary": counts,
             "sections": self._section_summary(),
             "total_findings": len(self.findings),
@@ -344,3 +347,53 @@ class ReportEngine:
     def save_html(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.to_html(), encoding="utf-8")
+
+    # ── Policy output (mirrors vinhtt-tool bash policy classification) ────────
+
+    def save_policy_report(self, output_dir: Path) -> dict:
+        """Write blockers.json, review-required.json, warnings.json, summary_policy.json.
+
+        Policy verdict logic:
+          FAIL            → any CRITICAL/HIGH finding, or a tool-failure finding
+          REVIEW_REQUIRED → only MEDIUM findings remain (no blockers)
+          WARNING         → only LOW/WARNING-severity findings remain
+          PASS            → only INFO findings (or none)
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        blockers = [f for f in self.findings if f.severity in (Severity.CRITICAL, Severity.HIGH)]
+        review_required = [f for f in self.findings if f.severity == Severity.MEDIUM]
+        warnings_list = [f for f in self.findings if f.severity in (Severity.WARNING, Severity.LOW)]
+        has_tool_error = any("tool-failure" in (f.tags or []) for f in self.findings)
+
+        if blockers or has_tool_error:
+            status = "FAIL"
+        elif review_required:
+            status = "REVIEW_REQUIRED"
+        elif warnings_list:
+            status = "WARNING"
+        else:
+            status = "PASS"
+
+        def _dump(lst: list) -> str:
+            return json.dumps([f.to_dict() for f in lst], indent=2, ensure_ascii=False)
+
+        (output_dir / "blockers.json").write_text(_dump(blockers), encoding="utf-8")
+        (output_dir / "review-required.json").write_text(_dump(review_required), encoding="utf-8")
+        (output_dir / "warnings.json").write_text(_dump(warnings_list), encoding="utf-8")
+
+        summary = {
+            "generated_at": self.generated_at,
+            "project": self.project_info,
+            "status": status,
+            "counts": {
+                "blockers": len(blockers),
+                "review_required": len(review_required),
+                "warnings": len(warnings_list),
+            },
+            "tool_error_detected": has_tool_error,
+        }
+        (output_dir / "summary_policy.json").write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        return summary

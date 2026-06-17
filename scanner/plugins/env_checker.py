@@ -258,12 +258,21 @@ class EnvChecker(BasePlugin):
         """Discover ENV_ACCESS_PATTERNS from every adapter class (DRY fallback)."""
         import importlib
         import pkgutil
+        import sys
         import scanner.adapters
         from scanner.adapters.base_adapter import BaseAdapter
 
+        _KNOWN_ADAPTERS = ['node', 'python', 'go', 'java', 'dotnet', 'swift', 'php']
+
+        def _iter_names():
+            names = [n for _, n, _ in pkgutil.iter_modules(scanner.adapters.__path__)]
+            if not names and getattr(sys, 'frozen', False):
+                names = _KNOWN_ADAPTERS
+            return names
+
         patterns = []
         seen = set()
-        for _, mod_name, _ in pkgutil.iter_modules(scanner.adapters.__path__):
+        for mod_name in _iter_names():
             if mod_name == "base_adapter":
                 continue
             try:
