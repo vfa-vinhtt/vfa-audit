@@ -1,0 +1,28 @@
+name: config-sync
+
+# Fails the build if scanner/default_config.yaml (the config bundled into the
+# installed package) drifts from the project-local config.yaml.
+on:
+  push:
+    paths:
+      - "config.yaml"
+      - "scanner/default_config.yaml"
+      - "tools/sync_default_config.py"
+      - ".github/workflows/config-sync.yml"
+  pull_request:
+    paths:
+      - "config.yaml"
+      - "scanner/default_config.yaml"
+      - "tools/sync_default_config.py"
+      - ".github/workflows/config-sync.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check bundled default config is in sync
+        run: python tools/sync_default_config.py

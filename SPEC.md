@@ -7,7 +7,7 @@ Formal reference for behavior, requirements, and contracts. For install/usage se
 
 ## 1. Scope & non-goals
 
-**In scope.** Static detection of: hardcoded secrets, vulnerable/malicious/typosquat
+**In scope.** Static detection of: hardcoded secrets, vulnerable, malicious, or typosquatted
 dependencies, license-policy violations, PII in source, insecure configuration,
 `.env`/`.gitignore` exposure, and unlicensed font/image assets — across multiple
 languages — with a scored, multi-format report.

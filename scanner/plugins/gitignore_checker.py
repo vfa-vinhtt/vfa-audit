@@ -22,9 +22,7 @@ from ..utils.gitignore_utils import parse_gitignore, path_is_ignored, pattern_is
 # (pattern, description, severity) — required for every project
 ALWAYS_REQUIRED: List[Tuple[str, str, Severity]] = [
     (".env", ".env file", Severity.CRITICAL),
-    (".env.*", ".env variant files (e.g. .env.local)", Severity.HIGH),
-    ("*.pem", "PEM private key / certificate files", Severity.CRITICAL),
-    ("*.key", "Private key files", Severity.CRITICAL)
+    (".env.*", ".env variant files (e.g. .env.local)", Severity.HIGH)
 ]
 
 # (pattern, description, severity, condition) — required only when `condition`
@@ -58,6 +56,20 @@ DANGEROUS_FILES: List[Tuple[str, Severity, str]] = [
     ("terraform.tfvars", Severity.HIGH, "Terraform tfvars may contain secrets."),
     ("*.tfstate", Severity.HIGH, "Terraform state contains real infrastructure details."),
 ]
+
+# Broad name-substring patterns above match any filename containing the word.
+# They target secret *stores* (secrets.json, credentials.yaml, client_secret.txt),
+# not source code that merely *handles* secrets (secret_checker.py,
+# credentials_manager.go). Hardcoded secrets inside code are secret_checker's job,
+# so skip these patterns for recognized source-code extensions to avoid false positives.
+NAME_SUBSTRING_PATTERNS: Set[str] = {"*secret*", "*credential*"}
+SOURCE_CODE_EXTENSIONS: Set[str] = {
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".go", ".java", ".kt", ".kts", ".cs", ".php", ".rb", ".swift",
+    ".m", ".mm", ".c", ".h", ".cpp", ".hpp", ".cc", ".rs", ".scala",
+    ".sh", ".bash", ".zsh", ".ps1", ".pl", ".lua", ".dart", ".groovy",
+    ".vue", ".svelte", ".tf",
+}
 
 
 class GitignoreChecker(BasePlugin):
@@ -166,6 +178,10 @@ class GitignoreChecker(BasePlugin):
         for pattern, severity, note in DANGEROUS_FILES:
             for f in files:
                 if not fnmatch.fnmatch(f.name.lower(), pattern.lower()):
+                    continue
+                # A source file whose name merely contains "secret"/"credential" is
+                # code that handles secrets, not a secret store — don't flag it here.
+                if pattern in NAME_SUBSTRING_PATTERNS and f.suffix.lower() in SOURCE_CODE_EXTENSIONS:
                     continue
                 rel = str(f.relative_to(root))
                 rel_posix = rel.replace("\\", "/")

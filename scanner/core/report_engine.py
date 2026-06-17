@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from ..plugins.base_plugin import Finding, Severity
+from .. import __version__ as TOOL_VERSION
 
 
 SEVERITY_COUNTS_TEMPLATE = {s.value: 0 for s in Severity}
@@ -186,6 +187,7 @@ class ReportEngine:
         score = self._score()
         return {
             "generated_at": self.generated_at,
+            "tool_version": TOOL_VERSION,
             "score": score,
             "grade": self._grade(score),
             "project": self.project_info,
@@ -214,6 +216,7 @@ class ReportEngine:
             f"# Security Scan Report — {proj.get('project_name', 'Unknown Project')}",
             f"",
             f"**Generated:** {self.generated_at}  ",
+            f"**Scanner Version:** v{TOOL_VERSION}  ",
             f"**Score:** {score}/100 (Grade {self._grade(score)})  ",
             f"**Git Repo:** {proj.get('git_remote', 'N/A')}  ",
             f"**Branch:** {proj.get('git_branch', 'N/A')}  ",
@@ -309,6 +312,7 @@ class ReportEngine:
         print(f"Repo    : {proj.get('git_remote', 'N/A')}")
         print(f"Branch  : {proj.get('git_branch', 'N/A')}")
         print(f"Language: {', '.join(proj.get('languages', ['N/A']))}")
+        print(f"Scanner : v{TOOL_VERSION}")
         print(f"Score   : {BOLD}{score}/100{W}  (Grade {self._grade(score)})")
         print(f"{'─' * 60}")
         print(f"{'Severity':<12} {'Count':>6}")

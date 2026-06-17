@@ -1,7 +1,7 @@
 # Project Security Scanner
 
 A multi-language, extensible security & compliance scanner. It detects hardcoded
-secrets, vulnerable/malicious dependencies, license-policy violations, PII,
+secrets, vulnerable or malicious dependencies, license-policy violations, PII,
 insecure configuration, `.env`/`.gitignore` exposure, and unlicensed assets — then
 produces a scored report in console, JSON, Markdown, or HTML.
 
@@ -38,15 +38,46 @@ Runs on **Windows, Linux, and macOS** (Python 3.10+).
 
 ## Installation
 
+Requires **Python 3.10+**.
+
+### Option A — install as a command (recommended)
+
+Installs a `vfa-audit` command you can run from any directory.
+
+**With [pipx](https://pipx.pypa.io)** (keeps it isolated; install pipx once with
+`python -m pip install --user pipx && python -m pipx ensurepath`):
+
 ```bash
-git clone <your-repo-url> security-scanner
-cd security-scanner
+pipx install git+https://github.com/vfa-vinhtt/vfa-audit.git
+```
+
+**Or with pip:**
+
+```bash
+pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
+```
+
+Pin a released version by appending a tag, e.g. `…/vfa-audit.git@v1.0.0`.
+
+Optional pip-installable helper tools come as **extras** — `assets` (fonttools +
+Pillow), `ocr` (pytesseract), `audit` (pip-audit + pip-licenses), or `all`:
+
+```bash
+pipx install "vfa-audit[all] @ git+https://github.com/vfa-vinhtt/vfa-audit.git"
+```
+
+### Option B — run from a clone (for development)
+
+```bash
+git clone https://github.com/vfa-vinhtt/vfa-audit.git
+cd vfa-audit
 
 python -m venv venv
 # Windows:        venv\Scripts\activate
 # Linux / macOS:  source venv/bin/activate
 
 pip install -r requirements.txt   # only hard dependency is PyYAML
+python main.py /path/to/your/project --format html -o report
 ```
 
 > The only required dependency is **PyYAML**. Everything else is optional and used
@@ -70,9 +101,12 @@ pip install -r requirements.txt   # only hard dependency is PyYAML
 
 ## Usage
 
-Run from anywhere, pointing at the project to scan:
+Run from anywhere, pointing at the project to scan. If you installed it as a
+command (Option A), use `vfa-audit`; from a clone (Option B), use `python main.py`:
 
 ```bash
+vfa-audit /path/to/your/project --format html -o report
+# or, from a clone:
 python main.py /path/to/your/project --format html -o report
 ```
 
@@ -81,7 +115,7 @@ python main.py /path/to/your/project --format html -o report
 | Argument | Description |
 |---|---|
 | `path` | Project to scan (default: current directory). |
-| `--config` | Config file path (default: `config.yaml`). |
+| `--config` | Config file path (defaults to `./config.yaml`, then the config bundled in the package). |
 | `-o, --output` | Output report basename (`report` → `report.html`/`.json`/`.md`). |
 | `--format` | `console` (default), `json`, `md`, or `html`. |
 | `--strict-requirements` | Stop the scan if any required tool is missing (this is the default). |
@@ -180,6 +214,28 @@ plugins:
 adapters: {}
 ```
 
+### Two config files: `config.yaml` vs `scanner/default_config.yaml`
+
+There are intentionally **two** copies, and `config.yaml` is the source of truth:
+
+- **`config.yaml`** (repo root) — the editable config. It's picked up automatically
+  when present in the directory you run the scan from.
+- **`scanner/default_config.yaml`** — the same content **bundled inside the installed
+  package** (`pip install`). It's the fallback the `vfa-audit` command uses when there's
+  no local `config.yaml`. (Resolution order: `--config` → `./config.yaml` → bundled default.)
+
+Because `pip` only ships files inside the `scanner/` package, the root `config.yaml`
+is **not** installed — the bundled copy is what reaches installed users. So after you
+change defaults you want everyone to get, re-sync the bundled copy:
+
+```bash
+python tools/sync_default_config.py --fix   # copy config.yaml -> scanner/default_config.yaml
+python tools/sync_default_config.py         # check only (used by CI; exit 1 if they drift)
+```
+
+A GitHub Actions workflow (`.github/workflows/config-sync.yml`) runs the check on every
+push/PR, so a stale bundled default fails CI before it can merge.
+
 ---
 
 ## Plugins
@@ -277,9 +333,12 @@ to that section's findings.
 ## Project layout
 
 ```
-main.py                     # entry point, CLI, orchestration, preflight
-config.yaml                 # configuration
+main.py                     # thin shim for running from a clone (-> scanner.cli)
+pyproject.toml              # packaging: installs the `vfa-audit` command
+config.yaml                 # configuration (project-local override)
 scanner/
+  cli.py                    # entry point, CLI, orchestration, preflight
+  default_config.yaml       # config bundled into the package (fallback)
   core/
     file_scanner.py         # file walk, language detection, ignore handling
     git_scanner.py          # git metadata

@@ -211,9 +211,20 @@ class PythonAdapter(BaseAdapter):
         for item in data:
             pkg_name = item.get("Name")
             license_str = item.get("License", "UNKNOWN")
-            
+
+            # pip-licenses returns the raw `License:` metadata field. Packages that
+            # declare `license = {file = "LICENSE"}` put the ENTIRE license text
+            # there, not an SPDX id/expression. A multi-line / long blob can't be
+            # classified reliably — naive substring matching both mis-fires (full MIT
+            # text incidentally contains weak-copyleft keywords) and would tokenize
+            # "Copyright (c) ..." into junk like "c" — so treat it as undetermined
+            # rather than emit a false finding.
+            if "\n" in license_str or len(license_str) > 200:
+                continue
+
             licenses = [l.strip() for l in re.split(r'OR|AND|[()/]', license_str) if l.strip()]
-            if not licenses: licenses = [license_str]
+            if not licenses:
+                licenses = [license_str]
 
             for lic in licenses:
                 if lic.upper() in denied:
@@ -226,8 +237,14 @@ class PythonAdapter(BaseAdapter):
                         tags=["license", "dependency", "python"],
                     ))
                     break
-                
+
                 classification = _classify_license(lic)
+                # Undetermined licenses can't be judged — usually it just means the
+                # package's metadata has no recognizable license id, NOT a real policy
+                # violation. Skip them here (consistent with _check_licenses_by_content)
+                # instead of raising a false HIGH.
+                if classification in ("unknown", "no-license"):
+                    continue
                 if classification not in allowed_class:
                     findings.append(Finding(
                         plugin="license_checker",
