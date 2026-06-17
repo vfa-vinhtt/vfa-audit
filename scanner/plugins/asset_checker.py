@@ -6,7 +6,10 @@ Detects:
 3. Common stock photo filename patterns that may indicate unlicensed images
 """
 from __future__ import annotations
+import hashlib
+import json
 import re
+import subprocess
 from pathlib import Path
 from typing import List, Set, Dict
 
@@ -75,6 +78,26 @@ COMMERCIAL_RISK_FONTS: Set[str] = {
     "ionicons",
 }
 
+# ExifTool: license text patterns that indicate embedding is blocked
+FONT_BLOCK_RE = re.compile(
+    r"non[\-\s]?commercial|personal[\-\s]?use|trial|demo|evaluation|restricted|proprietary",
+    re.IGNORECASE,
+)
+# ExifTool: copyleft patterns that require a compatibility review
+FONT_REVIEW_RE = re.compile(r"\bgpl\b|sspl", re.IGNORECASE)
+
+
+def _hash_font_file(path: Path) -> str:
+    """SHA256 of a font file — used to identify renamed fonts across projects."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return ""
+
 
 def _dir_has_license(directory: Path) -> bool:
     """Check if a directory contains any license file."""
@@ -134,6 +157,7 @@ class AssetChecker(BasePlugin):
         do_font_meta = tools.get("font_metadata", True) and TTFont is not None
         do_image_meta = tools.get("image_metadata", True) and _PILImage is not None
         do_ocr = tools.get("ocr_text_in_image", False) and _pytesseract is not None and _PILImage is not None
+        do_exiftool = tools.get("exiftool_metadata", False)
 
         # Filename / nearby-LICENSE heuristics (always run, fast). When per-font
         # metadata checking is active it owns the license verdict, so skip the weak
@@ -153,6 +177,22 @@ class AssetChecker(BasePlugin):
                 recommendation="Install fonttools (pip install fonttools) to verify each font's embedding rights.",
                 tags=["asset", "font"],
             )
+
+        if do_exiftool and fonts:
+            if resolve_command("exiftool"):
+                self._scan_with_exiftool(fonts, root)
+            else:
+                self.add_finding(
+                    severity=Severity.INFO,
+                    title="ExifTool font metadata scan skipped (exiftool not installed)",
+                    description="ExifTool copyright/license text could not be read from font files.",
+                    recommendation=(
+                        "Install exiftool (brew install exiftool | "
+                        "apt install libimage-exiftool-perl | choco/scoop install exiftool) "
+                        "to enable font license-text analysis alongside the fsType check."
+                    ),
+                    tags=["asset", "font"],
+                )
 
         if do_image_meta:
             for f in images:
@@ -402,7 +442,10 @@ class AssetChecker(BasePlugin):
             except Exception:
                 pass
 
-        evidence = (license_desc or license_url or copyright_ or "")[:200] or None
+        sha256 = _hash_font_file(fpath)
+        sha256_suffix = f"\nSHA256: {sha256}" if sha256 else ""
+        _ev_base = (license_desc or license_url or copyright_ or "")[:200]
+        evidence = (_ev_base + sha256_suffix) or None
 
         if fstype is None:
             # No OS/2 fsType table — embedding rights can't be read. Surface it so the
@@ -456,6 +499,121 @@ class AssetChecker(BasePlugin):
                 recommendation="Embedding flags allow use; still confirm the written license permits your distribution.",
                 file=rel, evidence=evidence, tags=["asset", "font", "license"],
             )
+
+    def _scan_with_exiftool(self, fonts: List[Path], root: Path) -> None:
+        """Read font copyright/license text metadata via ExifTool.
+
+        Runs alongside fonttools: fonttools checks fsType (embedding rights flag),
+        ExifTool reads human-readable fields (Copyright, License, UsageTerms, etc.)
+        that can catch 'non-commercial', 'trial', or GPL terms the flag alone misses.
+        SHA256 of each font is embedded in evidence for renamed-font identification.
+        """
+        exiftool_bin = resolve_command("exiftool") or "exiftool"
+        command = [
+            exiftool_bin, "-r", "-json",
+            "-ext", "ttf", "-ext", "otf", "-ext", "woff", "-ext", "woff2",
+            str(root),
+        ]
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=120,
+            )
+        except FileNotFoundError:
+            return
+        except subprocess.TimeoutExpired:
+            self.add_finding(
+                severity=Severity.WARNING,
+                title="ExifTool font metadata scan timed out",
+                description="ExifTool took too long; the font directory may be very large.",
+                recommendation="Run exiftool manually or limit the number of fonts in the project.",
+                tags=["asset", "font", "tool-failure"],
+            )
+            return
+
+        if not result.stdout.strip():
+            return
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return
+
+        for entry in entries:
+            source = entry.get("SourceFile", "")
+            if not source:
+                continue
+            fpath = Path(source)
+            try:
+                rel = str(fpath.relative_to(root))
+            except ValueError:
+                rel = source
+
+            lic_text = " ".join(
+                str(entry[k]) for k in ("License", "LicenseInfo", "LicenseURL", "UsageTerms", "Rights")
+                if entry.get(k)
+            ).strip()
+            extra_text = " ".join(
+                str(entry[k]) for k in ("Copyright", "CopyrightNotice", "Description")
+                if entry.get(k)
+            ).strip()
+
+            sha256 = _hash_font_file(fpath)
+            sha256_suffix = f"\nSHA256: {sha256}" if sha256 else ""
+            combined = (lic_text or extra_text)[:200]
+
+            if FONT_BLOCK_RE.search(lic_text) or FONT_BLOCK_RE.search(extra_text):
+                self.add_finding(
+                    severity=Severity.HIGH,
+                    title=f"Font has restrictive license terms: {fpath.name}",
+                    description=(
+                        f"ExifTool detected restrictive license text in '{rel}': {combined}"
+                    ),
+                    recommendation=(
+                        "This font appears to prohibit commercial or app use. "
+                        "Replace with an OFL/Apache-licensed alternative (e.g. a Google Font)."
+                    ),
+                    file=rel,
+                    evidence=(combined + sha256_suffix) or None,
+                    tags=["asset", "font", "license", "exiftool", "restricted"],
+                )
+            elif FONT_REVIEW_RE.search(lic_text) or FONT_REVIEW_RE.search(extra_text):
+                self.add_finding(
+                    severity=Severity.MEDIUM,
+                    title=f"Font has copyleft license — review required: {fpath.name}",
+                    description=(
+                        f"ExifTool detected a copyleft license (GPL/SSPL) in '{rel}': {combined}"
+                    ),
+                    recommendation=(
+                        "Copyleft fonts may impose distribution requirements. "
+                        "Confirm your project's distribution terms are compatible."
+                    ),
+                    file=rel,
+                    evidence=(combined + sha256_suffix) or None,
+                    tags=["asset", "font", "license", "exiftool", "copyleft"],
+                )
+            elif lic_text or extra_text:
+                self.add_finding(
+                    severity=Severity.INFO,
+                    title=f"Font license metadata found: {fpath.name}",
+                    description=f"ExifTool reports license/copyright for '{rel}': {combined}",
+                    recommendation="Verify these terms permit your intended usage (web, app, commercial).",
+                    file=rel,
+                    evidence=(combined + sha256_suffix) or None,
+                    tags=["asset", "font", "license", "exiftool"],
+                )
+            else:
+                self.add_finding(
+                    severity=Severity.LOW,
+                    title=f"Font has no license metadata (ExifTool): {fpath.name}",
+                    description=(
+                        f"ExifTool found no license, copyright, or usage-terms metadata in '{rel}'. "
+                        "Absence of metadata does not mean the font is free — check its source."
+                    ),
+                    recommendation="Manually verify the font license from its original source or distributor.",
+                    file=rel,
+                    evidence=sha256_suffix.strip() or None,
+                    tags=["asset", "font", "license", "exiftool", "no-metadata"],
+                )
 
     def _check_image_license(self, img_path: Path, rel: str) -> None:
         """Read embedded image provenance: EXIF Copyright/Artist, PNG text chunks, XMP

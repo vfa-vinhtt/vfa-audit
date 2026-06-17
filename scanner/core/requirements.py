@@ -12,10 +12,12 @@ when a required, relevant tool is absent.
 from __future__ import annotations
 import glob
 import importlib
+import importlib.metadata
 import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -27,7 +29,84 @@ import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+
+# Pinned tool versions — update here when a new tested release is adopted.
+# These are the single source of truth for every installer path (pip, go, npm,
+# dotnet, gem, winget, choco, GitHub release download).
+PINNED_VERSIONS: Dict[str, str] = {
+    # GitHub-release binaries
+    "gitleaks":                "8.30.1",
+    "trufflehog":              "3.95.5",
+    # Package-manager-only tools — pinned for winget/choco (brew/scoop left unversioned)
+    "trivy":                   "0.70.0",
+    "exiftool":                "12.76",
+    "tesseract":               "5.5.0",
+    # pip tools
+    "pip-audit":               "2.10.1",
+    "pip-licenses":            "4.4.0",
+    "fonttools":               "4.63.0",
+    "Pillow":                  "12.2.0",
+    "pytesseract":             "0.3.13",
+    # npm tools
+    "license-checker":         "25.0.1",
+    # go tools
+    "govulncheck":             "0.2.4",
+    "go-licenses":             "1.6.0",
+    # dotnet tools
+    "dotnet-project-licenses": "2.8.3",
+    # gem tools
+    "license_finder":          "7.2.1",
+}
+
+def _pv(tool: str) -> str:
+    """Return the pinned version string for `tool` (empty string if not pinned)."""
+    return PINNED_VERSIONS.get(tool, "")
+
+
+def _python_exe() -> str:
+    """Return a Python interpreter path that accepts -m arguments.
+
+    In a frozen PyInstaller binary, sys.executable is the binary itself and
+    cannot be used as a Python interpreter. Locate the system Python instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for candidate in ("python3", "python"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return sys.executable  # last resort; caller handles failure gracefully
+
+
+_module_check_cache: Dict[str, bool] = {}
+
+
+def _system_python_has_module(module: str) -> bool:
+    """Return True if the system Python interpreter can import *module*.
+
+    Used in frozen mode where the bundled sys.executable is not a Python
+    interpreter and importlib.util.find_spec() only sees the frozen bundle.
+    Results are cached so the subprocess is only spawned once per module.
+    """
+    if module in _module_check_cache:
+        return _module_check_cache[module]
+    python = _python_exe()
+    if python == sys.executable:
+        # No system Python found; the import will also fail at run time.
+        _module_check_cache[module] = False
+        return False
+    try:
+        proc = subprocess.run(
+            [python, "-c", f"import {module}"],
+            capture_output=True, timeout=5,
+        )
+        result = proc.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        result = False
+    _module_check_cache[module] = result
+    return result
 
 
 # Programmatic installers, keyed by tool command. Only tools with a reliable,
@@ -36,40 +115,69 @@ from typing import List, Optional, Tuple
 # manually. Toolchain-based installers (go/npm/dotnet/gem) only work if that
 # toolchain is already present.
 INSTALL_COMMANDS = {
-    "pip-audit":               [sys.executable, "-m", "pip", "install", "pip-audit"],
-    "pip-licenses":            [sys.executable, "-m", "pip", "install", "pip-licenses"],
-    "go-licenses":             ["go", "install", "github.com/google/go-licenses@latest"],
-    "govulncheck":             ["go", "install", "golang.org/x/vuln/cmd/govulncheck@latest"],
-    "license-checker":         ["npm", "install", "-g", "license-checker"],
-    "dotnet-project-licenses": ["dotnet", "tool", "install", "--global", "dotnet-project-licenses"],
-    "license_finder":          ["gem", "install", "license_finder"],
-    "fonttools":               [sys.executable, "-m", "pip", "install", "fonttools"],
-    "Pillow":                  [sys.executable, "-m", "pip", "install", "Pillow"],
-    "pytesseract":             [sys.executable, "-m", "pip", "install", "pytesseract"],
+    "pip-audit":               [sys.executable, "-m", "pip", "install", f"pip-audit=={_pv('pip-audit')}"],
+    "pip-licenses":            [sys.executable, "-m", "pip", "install", f"pip-licenses=={_pv('pip-licenses')}"],
+    "go-licenses":             ["go", "install", f"github.com/google/go-licenses@v{_pv('go-licenses')}"],
+    "govulncheck":             ["go", "install", f"golang.org/x/vuln/cmd/govulncheck@v{_pv('govulncheck')}"],
+    "license-checker":         ["npm", "install", "-g", f"license-checker@{_pv('license-checker')}"],
+    "dotnet-project-licenses": ["dotnet", "tool", "install", "--global", "dotnet-project-licenses",
+                                "--version", _pv("dotnet-project-licenses")],
+    "license_finder":          ["gem", "install", "license_finder", "--version", _pv("license_finder")],
+    "fonttools":               [sys.executable, "-m", "pip", "install", f"fonttools=={_pv('fonttools')}"],
+    "Pillow":                  [sys.executable, "-m", "pip", "install", f"Pillow=={_pv('Pillow')}"],
+    "pytesseract":             [sys.executable, "-m", "pip", "install", f"pytesseract=={_pv('pytesseract')}"],
 }
 
 # Standalone-binary installers via OS package managers, keyed by tool then manager.
 # A manager is used only if it is present on the system. (trufflehog is not published
 # on winget, so a winget-only machine reports it for manual install.)
+def _winget_version(tool: str) -> List[str]:
+    """Return ['--version', 'X.Y.Z'] when the tool has a pinned version, else []."""
+    v = _pv(tool)
+    return ["--version", v] if v else []
+
+def _choco_version(tool: str) -> List[str]:
+    v = _pv(tool)
+    return ["--version", v] if v else []
+
+
 BINARY_INSTALL_COMMANDS = {
     "gitleaks": {
         "scoop":  ["scoop", "install", "gitleaks"],
         "winget": ["winget", "install", "-e", "--id", "Gitleaks.Gitleaks",
-                   "--accept-source-agreements", "--accept-package-agreements"],
-        "choco":  ["choco", "install", "gitleaks", "-y"],
+                   "--accept-source-agreements", "--accept-package-agreements",
+                   *_winget_version("gitleaks")],
+        "choco":  ["choco", "install", "gitleaks", "-y", *_choco_version("gitleaks")],
         "brew":   ["brew", "install", "gitleaks"],
     },
     "trufflehog": {
         "scoop":  ["scoop", "install", "trufflehog"],
-        "choco":  ["choco", "install", "trufflehog", "-y"],
+        "choco":  ["choco", "install", "trufflehog", "-y", *_choco_version("trufflehog")],
         "brew":   ["brew", "install", "trufflesecurity/trufflehog/trufflehog"],
     },
     "tesseract": {  # OCR engine for asset_checker's text-in-image check
         "winget": ["winget", "install", "-e", "--id", "UB-Mannheim.TesseractOCR",
-                   "--accept-source-agreements", "--accept-package-agreements"],
+                   "--accept-source-agreements", "--accept-package-agreements",
+                   *_winget_version("tesseract")],
         "scoop":  ["scoop", "install", "tesseract"],
-        "choco":  ["choco", "install", "tesseract", "-y"],
+        "choco":  ["choco", "install", "tesseract", "-y", *_choco_version("tesseract")],
         "brew":   ["brew", "install", "tesseract"],
+    },
+    "trivy": {
+        "brew":   ["brew", "install", "trivy"],
+        "winget": ["winget", "install", "-e", "--id", "Aquasecurity.Trivy",
+                   "--accept-source-agreements", "--accept-package-agreements",
+                   *_winget_version("trivy")],
+        "scoop":  ["scoop", "install", "trivy"],
+        "choco":  ["choco", "install", "trivy", "-y", *_choco_version("trivy")],
+    },
+    "exiftool": {
+        "brew":   ["brew", "install", "exiftool"],
+        "winget": ["winget", "install", "-e", "--id", "OliverBetz.ExifTool",
+                   "--accept-source-agreements", "--accept-package-agreements",
+                   *_winget_version("exiftool")],
+        "scoop":  ["scoop", "install", "exiftool"],
+        "choco":  ["choco", "install", "exiftool", "-y", *_choco_version("exiftool")],
     },
 }
 
@@ -228,11 +336,43 @@ class Requirement:
     def installed(self) -> bool:
         if self.network_only:
             return True
-        # Python tools are run via `python -m <module>`, so detect them the same
-        # way (importable in the scanner's interpreter) rather than via PATH.
+        # Python tools are run via `python -m <module>`. In a frozen binary,
+        # sys.executable is not Python, so we delegate to the system Python and
+        # check there rather than probing the frozen bundle via find_spec.
         if self.module:
+            if getattr(sys, "frozen", False):
+                return _system_python_has_module(self.module)
             return importlib.util.find_spec(self.module) is not None
         return resolve_command(self.command) is not None
+
+    def installed_version(self) -> Optional[str]:
+        """Return the currently-installed version string, or None if not determinable."""
+        if not self.installed:
+            return None
+        if self.module:
+            try:
+                return importlib.metadata.version(self.module)
+            except importlib.metadata.PackageNotFoundError:
+                return None
+        # _VERSION_ARGS / _query_cli_version are defined later in this module; looked
+        # up at call time, not at class definition, so the forward reference is fine.
+        spec = _VERSION_ARGS.get(self.command)  # type: ignore[name-defined]
+        if not isinstance(spec, list):
+            return None
+        cmd_path = resolve_command(self.command)
+        if not cmd_path:
+            return None
+        return _query_cli_version(cmd_path, spec)  # type: ignore[name-defined]
+
+    def version_ok(self) -> bool:
+        """Return True when no version is pinned, or when the installed version matches."""
+        pinned = PINNED_VERSIONS.get(self.command)
+        if not pinned:
+            return True
+        installed = self.installed_version()
+        if not installed:
+            return True  # Can't determine — assume compatible rather than block
+        return installed.lstrip("v") == pinned.lstrip("v")
 
 
 def collect_requirements(config: dict, adapter_instances: list) -> List[Requirement]:
@@ -259,6 +399,28 @@ def collect_requirements(config: dict, adapter_instances: list) -> List[Requirem
         for tool, settings in (sc.get("tool_config") or {}).items():
             if settings.get("enabled") and tool in ext_tools:
                 reqs.append(Requirement(tool, f"secret_checker ({tool})", ext_tools[tool]))
+
+    # trivy is shared across secret_checker, dependency_checker, and license_checker.
+    # Add a single requirement when any of the three enables it.
+    _trivy_features: List[str] = []
+    if enabled(sc) and (sc.get("tool_config") or {}).get("trivy", {}).get("enabled"):
+        _trivy_features.append("secret_checker")
+    _dep_cfg = plugins.get("dependency_checker", {})
+    if enabled(_dep_cfg) and (_dep_cfg.get("tools") or {}).get("trivy", {}).get("enabled"):
+        _trivy_features.append("dependency_checker")
+    _lic_cfg = plugins.get("license_checker", {})
+    if enabled(_lic_cfg) and (_lic_cfg.get("tools") or {}).get("trivy"):
+        _trivy_features.append("license_checker")
+    if _trivy_features:
+        reqs.append(Requirement(
+            "trivy",
+            f"{' / '.join(_trivy_features)} (Trivy scanner)",
+            (
+                "brew install trivy | scoop install trivy | "
+                "winget install Aquasecurity.Trivy | "
+                "or see https://aquasecurity.github.io/trivy/latest/getting-started/installation/"
+            ),
+        ))
 
     # dependency_checker
     dep = plugins.get("dependency_checker", {})
@@ -290,6 +452,15 @@ def collect_requirements(config: dict, adapter_instances: list) -> List[Requirem
                                     "pip install pytesseract", module="pytesseract"))
             reqs.append(Requirement("tesseract", "asset_checker (OCR engine)",
                                     "winget/scoop/choco/brew install tesseract"))
+        if ac_tools.get("exiftool_metadata", False):
+            reqs.append(Requirement(
+                "exiftool",
+                "asset_checker (font copyright/license text metadata)",
+                (
+                    "brew install exiftool | apt install libimage-exiftool-perl | "
+                    "winget install OliverBetz.ExifTool | scoop/choco install exiftool"
+                ),
+            ))
 
     # Per-detected-language native tools, declared by each adapter. A tool spec is
     # (command, install_hint) or (command, install_hint, python_module).
@@ -339,11 +510,19 @@ def print_requirements_report(reqs: List[Requirement], strict: bool = False) -> 
     print("\nChecking tool requirements (enabled config features x detected languages):")
     blocking: List[Requirement] = []
     optional_missing: List[Requirement] = []
+    version_mismatches: List[Requirement] = []
     for r in items:
         if r.network_only:
             print(f"  [NOTE]  {r.command:<24} {r.feature} (network)")
         elif r.installed:
-            print(f"  [ OK ]  {r.command:<24} {r.feature}")
+            installed_ver = r.installed_version()
+            ver_str = f" ({installed_ver})" if installed_ver else ""
+            if not r.version_ok():
+                pinned = PINNED_VERSIONS.get(r.command, "?")
+                version_mismatches.append(r)
+                print(f"  [VWRN]  {r.command:<24} installed {installed_ver}, pinned {pinned} — will auto-upgrade")
+            else:
+                print(f"  [ OK ]  {r.command:<24} {r.feature}{ver_str}")
         elif r.optional:
             optional_missing.append(r)
             print(f"  [WARN]  {r.command:<24} {r.feature} (optional - will be skipped)")
@@ -359,11 +538,13 @@ def print_requirements_report(reqs: List[Requirement], strict: bool = False) -> 
         else:
             print(f"\n{len(blocking)} tool(s) missing - those specific checks will be skipped "
                   "(the scan still runs).")
+    elif version_mismatches:
+        print(f"\n{len(version_mismatches)} tool(s) need upgrading — auto-upgrading now.")
     elif optional_missing:
         print(f"\n{len(optional_missing)} optional tool(s) missing - those checks are skipped; the scan proceeds.")
     else:
         print("All required tools are installed.")
-    return blocking
+    return blocking, version_mismatches
 
 
 def print_setup_guide(missing: List[Requirement]) -> None:
@@ -406,16 +587,23 @@ def _platform_tokens() -> Tuple[List[str], List[str]]:
     return os_tok, arch_tok
 
 
-def install_from_github_release(tool: str, repo: str) -> Tuple[bool, str]:
-    """Download the official prebuilt binary for `tool` from the latest GitHub release
-    of `repo`, matching this OS/arch, and place it in scanner_bin_dir(). Returns
-    (ok, detail). Uses GITHUB_TOKEN/GH_TOKEN if set (higher rate limit)."""
+def install_from_github_release(tool: str, repo: str,
+                                version: Optional[str] = None) -> Tuple[bool, str]:
+    """Download the official prebuilt binary for `tool` from a GitHub release of `repo`,
+    matching this OS/arch, and place it in scanner_bin_dir(). Returns (ok, detail).
+
+    When *version* is given the exact tag ``v{version}`` is fetched; otherwise the
+    latest release is used. Uses GITHUB_TOKEN/GH_TOKEN if set (higher rate limit)."""
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "security-scanner"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    tag = f"v{version}" if version else None
+    endpoint = f"releases/tags/{tag}" if tag else "releases/latest"
     try:
-        req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest", headers=headers)
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/{endpoint}", headers=headers
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
             release = json.loads(resp.read())
     except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
@@ -517,6 +705,10 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
 
     for r in missing:
         cmd = INSTALL_COMMANDS.get(r.command)
+        # INSTALL_COMMANDS bakes in sys.executable at import time; when frozen,
+        # that value is the binary itself (not a Python interpreter). Swap it out.
+        if cmd and cmd[0] == sys.executable and getattr(sys, "frozen", False):
+            cmd = [_python_exe()] + list(cmd[1:])
         via_pkg_mgr = False
         if not cmd:
             manager = _pick_manager(r.command, binary_installer)
@@ -531,8 +723,10 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
         # manager or runtime needed). Handled here since it's not a subprocess command.
         if not cmd and r.command in GITHUB_RELEASES:
             repo = GITHUB_RELEASES[r.command]
-            print(f"  [DOWNLOAD] {r.command}  <-  github.com/{repo} (latest release)")
-            ok, detail = install_from_github_release(r.command, repo)
+            version = PINNED_VERSIONS.get(r.command)
+            tag_str = f"v{version}" if version else "latest"
+            print(f"  [DOWNLOAD] {r.command}  <-  github.com/{repo} ({tag_str})")
+            ok, detail = install_from_github_release(r.command, repo, version)
             if ok:
                 print(f"            ok -> {detail}")
                 installed_ok.add(r.command)
@@ -551,6 +745,17 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
             print(f"            could not run installer ({type(e).__name__}); install manually: {r.install_hint}")
             continue
         output = (proc.stderr or "") + (proc.stdout or "")
+        # PEP 668: macOS/Linux with an externally-managed Python (e.g. Homebrew) blocks
+        # plain `pip install`. Retry once with --break-system-packages so the user does
+        # not need to pre-configure pip or activate a venv just to use the scanner.
+        if proc.returncode != 0 and "externally-managed-environment" in output and len(cmd) > 2 and cmd[1:3] == ["-m", "pip"]:
+            retry_cmd = cmd + ["--break-system-packages"]
+            print(f"            pip: externally-managed-environment — retrying with --break-system-packages")
+            try:
+                proc = subprocess.run(retry_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+                output = (proc.stderr or "") + (proc.stdout or "")
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+                pass  # fall through to the failure path below
         if proc.returncode == 0 or _already_satisfied(proc.returncode, output):
             print("            ok" if proc.returncode == 0 else "            already installed")
             installed_ok.add(r.command)
@@ -567,4 +772,92 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
     # New console scripts / modules may have appeared; refresh import caches and re-check.
     # A successful install command counts as resolved even if PATH isn't refreshed in-process.
     importlib.invalidate_caches()
+    # Clear the frozen-mode module cache so re-checks see newly installed packages.
+    _module_check_cache.clear()
     return [r for r in missing if r.command not in installed_ok and not r.installed]
+
+
+# ── Tool version collection ───────────────────────────────────────────────────
+
+# How to invoke each tool to retrieve its version.  Each entry is either a list
+# of extra args passed to the binary, or a special "module:<dist-name>" string
+# for pure-Python tools that are queried via importlib.metadata.
+_VERSION_ARGS: Dict[str, object] = {
+    "gitleaks":                ["version"],
+    "trufflehog":              ["--version"],
+    "trivy":                   ["--version"],
+    "pip-audit":               ["--version"],
+    "govulncheck":             ["-version"],
+    "go-licenses":             ["--version"],
+    "license-checker":         ["--version"],
+    "license_finder":          ["--version"],
+    "dotnet-project-licenses": ["--version"],
+    "exiftool":                ["-ver"],
+    "tesseract":               ["--version"],
+    "fonttools":               "module:fonttools",
+    "Pillow":                  "module:Pillow",
+    "pytesseract":             "module:pytesseract",
+}
+
+_VERSION_RE = re.compile(r"v?(\d+\.\d+[\.\d]*)")
+
+
+def _parse_version(text: str) -> str:
+    """Extract the first semver-like token from arbitrary version output."""
+    m = _VERSION_RE.search(text or "")
+    return m.group(0) if m else (text.strip().splitlines()[0][:40] if text.strip() else "unknown")
+
+
+def _query_cli_version(cmd_path: str, args: list, timeout: int = 5) -> str:
+    try:
+        result = subprocess.run(
+            [cmd_path] + args,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        return _parse_version(output)
+    except Exception:
+        return "unknown"
+
+
+def collect_tool_info(tool_names: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    """Return a list of {name, version, path} for every known scan tool that is
+    currently installed.  When *tool_names* is given only those tools are queried;
+    otherwise all entries in _VERSION_ARGS are checked.
+
+    Python itself is always included as the first entry.
+    """
+    names = tool_names if tool_names is not None else list(_VERSION_ARGS.keys())
+    rows: List[Dict[str, str]] = []
+
+    # Python runtime always first.
+    rows.append({
+        "name": "python",
+        "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "path": sys.executable,
+    })
+
+    for name in names:
+        spec = _VERSION_ARGS.get(name)
+        if spec is None:
+            continue
+
+        if isinstance(spec, str) and spec.startswith("module:"):
+            dist = spec[len("module:"):]
+            try:
+                ver = importlib.metadata.version(dist)
+            except importlib.metadata.PackageNotFoundError:
+                continue
+            rows.append({"name": name, "version": ver, "path": f"python:{dist}"})
+            continue
+
+        # CLI tool
+        cmd_path = resolve_command(name)
+        if not cmd_path:
+            continue
+        version = _query_cli_version(cmd_path, list(spec))
+        rows.append({"name": name, "version": version, "path": cmd_path})
+
+    return rows

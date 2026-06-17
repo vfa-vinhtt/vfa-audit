@@ -1,0 +1,16 @@
+[project]
+name = "vfa-audit"
+version = "1.0.0"
+description = "Multi-language security scanner: secrets, CVEs, licenses, PII, and more."
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+full = ["Pillow>=9.0", "fonttools>=4.0", "pytesseract>=0.3"]
+
+[project.scripts]
+vfa-audit = "main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"

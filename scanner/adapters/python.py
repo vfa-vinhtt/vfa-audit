@@ -1,10 +1,26 @@
 from __future__ import annotations
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Any, List, Set
+
+
+def _python_exe() -> str:
+    """Return a Python interpreter that accepts -m arguments.
+
+    When running as a frozen PyInstaller binary, sys.executable is the binary
+    itself and cannot run -m modules. Locate the system Python instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for candidate in ("python3", "python"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return sys.executable
 
 from .base_adapter import BaseAdapter
 from ..plugins.base_plugin import Finding, Severity
@@ -154,7 +170,7 @@ class PythonAdapter(BaseAdapter):
         dep_info = {name: {"version": ver, "license": "UNKNOWN"} for name, ver in packages.items()}
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "piplicenses", "--format=json", "--with-license-file",
+                [_python_exe(), "-m", "piplicenses", "--format=json", "--with-license-file",
                  "--ignore-packages", "pip", "setuptools", "wheel"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, cwd=self.root
             )
@@ -173,7 +189,7 @@ class PythonAdapter(BaseAdapter):
         findings = []
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "piplicenses", "--format=json"],
+                [_python_exe(), "-m", "piplicenses", "--format=json"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=self.root
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
@@ -182,8 +198,7 @@ class PythonAdapter(BaseAdapter):
                 severity=Severity.LOW,
                 title="Python pip-licenses tool failed",
                 description=str(e),
-                recommendation="Install pip-licenses into the scanner's Python: "
-                               f"{sys.executable} -m pip install pip-licenses",
+                recommendation="Install pip-licenses: pip install pip-licenses",
                 tags=["license", "tool-failure", "python"],
             )]
 
@@ -244,7 +259,7 @@ class PythonAdapter(BaseAdapter):
         """Run pip-audit and return vulnerabilities."""
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip_audit", "--format=json", "--progress-spinner=off"],
+                [_python_exe(), "-m", "pip_audit", "--format=json", "--progress-spinner=off"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=self.root, timeout=120
             )
             if result.stdout:
