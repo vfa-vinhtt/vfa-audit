@@ -2,7 +2,21 @@
 temp
 *.zip
 .env
+.env.*
 __pycache__
+
+# Secrets & private keys (never commit these)
+*.pem
+*.key
+*.p12
+*.keystore
+id_rsa
+id_ed25519
+
+# Generated scan reports
+report.json
+report.md
+report.html
 
 # Python
 *.py[cod]

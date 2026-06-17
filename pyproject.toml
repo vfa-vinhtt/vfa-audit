@@ -1,16 +1,61 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "vfa-audit"
-version = "1.0.0"
-description = "Multi-language security scanner: secrets, CVEs, licenses, PII, and more."
+# Version is read dynamically from scanner/__init__.py (__version__) — the single
+# source of truth used by both the installed package and the scan reports. See the
+# [tool.setuptools.dynamic] section below.
+dynamic = ["version"]
+description = "A multi-language, extensible security & compliance scanner (secrets, vulnerable deps, licenses, PII, insecure config, and more)."
+readme = "README.md"
 requires-python = ">=3.10"
+# SPDX expression (PEP 639). Using a bare string here keeps the package's
+# `License-Expression` metadata a short, classifiable id ("MIT") instead of the
+# full LICENSE text — the latter is what `license = { file = "LICENSE" }` emits
+# and what made license tools misread the license. The file still ships via
+# `license-files` below.
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Vitalify Asia", email = "vfa@vitalify.asia" }]
+keywords = ["security", "scanner", "secrets", "sast", "compliance", "vulnerabilities", "pii"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Environment :: Console",
+]
+
+# The only hard dependency. Everything else is optional and used only when the
+# corresponding check is enabled — see the extras below and the README.
 dependencies = ["PyYAML>=6.0"]
 
 [project.optional-dependencies]
-full = ["Pillow>=9.0", "fonttools>=4.0", "pytesseract>=0.3"]
+# Image/font asset metadata checks (asset_checker).
+assets = ["fonttools>=4.0", "Pillow>=10.0"]
+# OCR support for flagging rendered text in images (asset_checker, optional).
+ocr = ["pytesseract>=0.3"]
+# Python dependency vuln/license audit tools, into the same interpreter.
+audit = ["pip-audit>=2.7", "pip-licenses>=4.0"]
+# Everything installable via pip in one go.
+all = ["fonttools>=4.0", "Pillow>=10.0", "pytesseract>=0.3", "pip-audit>=2.7", "pip-licenses>=4.0"]
 
+[project.urls]
+Homepage = "https://github.com/vfa-vinhtt/vfa-audit"
+Repository = "https://github.com/vfa-vinhtt/vfa-audit"
+
+# Installs a `vfa-audit` command on PATH that calls scanner.cli:main.
 [project.scripts]
-vfa-audit = "main:main"
+vfa-audit = "scanner.cli:main"
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+# Single source of truth for the version: scanner/__init__.py's __version__.
+[tool.setuptools.dynamic]
+version = { attr = "scanner.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["scanner*"]
+
+[tool.setuptools.package-data]
+# Bundle the default config so the installed command works from any directory.
+scanner = ["default_config.yaml"]

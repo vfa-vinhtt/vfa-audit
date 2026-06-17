@@ -1,9 +1,9 @@
 # vfa-audit
 
-**Version 1.0.0** — A multi-language, extensible security & compliance scanner. Detects hardcoded
-secrets, vulnerable dependencies, license-policy violations, PII, insecure configuration,
-`.env`/`.gitignore` exposure, and unlicensed assets — then produces a scored report in
-console, JSON, Markdown, HTML, or policy-gate format.
+A multi-language, extensible security & compliance scanner. It detects hardcoded
+secrets, vulnerable or malicious dependencies, license-policy violations, PII,
+insecure configuration, `.env`/`.gitignore` exposure, and unlicensed assets — then
+produces a scored report in console, JSON, Markdown, HTML, or policy-gate format.
 
 Runs on **Windows, Linux, and macOS** (Python 3.10+).
 
@@ -53,7 +53,39 @@ Additional checks: **PII** in source code, **insecure configuration**, **`.env` 
 
 ## Installation
 
-### Run from source
+Requires **Python 3.10+**.
+
+### Option A — install as a command (recommended)
+
+Installs a `vfa-audit` command you can run from any directory.
+
+**With [pipx](https://pipx.pypa.io)** (keeps it isolated; install pipx once with
+`python -m pip install --user pipx && python -m pipx ensurepath`):
+
+```bash
+pipx install git+https://github.com/vfa-vinhtt/vfa-audit.git
+```
+
+**Or with pip:**
+
+```bash
+pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
+```
+
+Pin a released version by appending a tag, e.g. `…/vfa-audit.git@v1.0.0`.
+
+Optional pip-installable helper tools come as **extras** — `assets` (fonttools +
+Pillow), `ocr` (pytesseract), `audit` (pip-audit + pip-licenses), or `all`:
+
+```bash
+pipx install "vfa-audit[all] @ git+https://github.com/vfa-vinhtt/vfa-audit.git"
+```
+
+### Option B — run from a clone (for development)
+
+```bash
+git clone https://github.com/vfa-vinhtt/vfa-audit.git
+cd vfa-audit
 
 ```bash
 git clone <repo-url> vfa-audit
@@ -64,6 +96,7 @@ python -m venv .venv
 # Linux / macOS:  source .venv/bin/activate
 
 pip install -r requirements.txt   # only hard dependency is PyYAML
+python main.py /path/to/your/project --format html -o report
 ```
 
 Run the scanner:
@@ -134,12 +167,17 @@ cd C:\path\to\project && C:\path\to\dist\vfa-audit_v1.0.0.exe
 
 ## Usage
 
+Run from anywhere, pointing at the project to scan. If you installed it as a
+command (Option A), use `vfa-audit`; from a clone (Option B), use `python main.py`:
+
 ```bash
-# default: scan current directory, write JSON report to <tool-dir>/report/
+# default: scan the current directory, write a JSON report to ./report/
+vfa-audit
+# or, from a clone:
 python main.py
 
-# scan a specific project
-python main.py /path/to/project
+# scan a specific project and write an HTML report
+vfa-audit /path/to/your/project --format html -o report
 ```
 
 ### Command-line arguments
@@ -147,7 +185,7 @@ python main.py /path/to/project
 | Argument | Description |
 |---|---|
 | `path` | Project to scan (default: current directory). |
-| `--config` | Config file path (default: `config.yaml`). |
+| `--config` | Config file path (defaults to `./config.yaml`, then the config bundled in the package). |
 | `-o, --output` | Output report basename or directory. Defaults to `<tool-dir>/report/<YYYYMMDD_HHmm>_<project-name>`. |
 | `--format` | `json` (default), `console`, `md`, `html`, or `policy`. |
 | `--zip` | Compress the output file (or policy directory) into a `.zip` archive. |
@@ -250,6 +288,28 @@ plugins:
 
 adapters: {}
 ```
+
+### Two config files: `config.yaml` vs `scanner/default_config.yaml`
+
+There are intentionally **two** copies, and `config.yaml` is the source of truth:
+
+- **`config.yaml`** (repo root) — the editable config. It's picked up automatically
+  when present in the directory you run the scan from.
+- **`scanner/default_config.yaml`** — the same content **bundled inside the installed
+  package** (`pip install`). It's the fallback the `vfa-audit` command uses when there's
+  no local `config.yaml`. (Resolution order: `--config` → `./config.yaml` → bundled default.)
+
+Because `pip` only ships files inside the `scanner/` package, the root `config.yaml`
+is **not** installed — the bundled copy is what reaches installed users. So after you
+change defaults you want everyone to get, re-sync the bundled copy:
+
+```bash
+python tools/sync_default_config.py --fix   # copy config.yaml -> scanner/default_config.yaml
+python tools/sync_default_config.py         # check only (used by CI; exit 1 if they drift)
+```
+
+A GitHub Actions workflow (`.github/workflows/config-sync.yml`) runs the check on every
+push/PR, so a stale bundled default fails CI before it can merge.
 
 ---
 
@@ -356,9 +416,10 @@ The JSON `info` block records the scanner version and all external tool versions
 ## Project layout
 
 ```
-main.py                       # entry point, CLI, orchestration, preflight
+main.py                     # thin shim for running from a clone (-> scanner.cli)
+pyproject.toml              # packaging: installs the `vfa-audit` command, version (1.0.0), console script entry point
+config.yaml                 # configuration (project-local override)
 __main__.py                   # enables `python -m vfa_audit` invocation
-pyproject.toml                # package metadata, version (1.0.0), console script entry point
 config.yaml                   # default configuration
 scripts/
   build.sh                    # macOS/Linux PyInstaller build → dist/vfa-audit
@@ -366,6 +427,8 @@ scripts/
   vfa_audit.spec              # PyInstaller one-file spec (hiddenimports for all plugins/adapters)
 .github/workflows/build.yml   # CI: builds binaries for macOS, Linux, Windows on tag push
 scanner/
+  cli.py                    # entry point, CLI, orchestration, preflight
+  default_config.yaml       # config bundled into the package (fallback)
   core/
     file_scanner.py           # file walk, language detection, ignore handling
     git_scanner.py            # git metadata

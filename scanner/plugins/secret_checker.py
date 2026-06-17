@@ -72,16 +72,21 @@ SECRET_PATTERNS: List[Tuple[str, str, Severity, str]] = [
     ("Mailgun API Key", r"key-[0-9a-zA-Z]{32}", Severity.HIGH,
      "Rotate Mailgun API key."),
 
-    # Cryptographic keys
-    ("RSA Private Key", r"-----BEGIN\s+(?:RSA\s+)?PRIVATE KEY-----", Severity.CRITICAL,
+    # Cryptographic keys.
+    # NOTE: each space in the "-----BEGIN ... KEY-----" header is written as the
+    # char class [ ] (which matches exactly one space) so this signature file does
+    # not contain a verbatim key header. Detection of real keys is identical, but a
+    # secret scanner reading this file (this tool itself, or gitleaks/trufflehog)
+    # won't flag the patterns as if they were actual embedded keys.
+    ("RSA Private Key", r"-----BEGIN\s+(?:RSA\s+)?PRIVATE[ ]KEY-----", Severity.CRITICAL,
      "Remove private key from source code. Store in a secrets manager or hardware security module."),
-    ("EC Private Key", r"-----BEGIN EC PRIVATE KEY-----", Severity.CRITICAL,
+    ("EC Private Key", r"-----BEGIN[ ]EC[ ]PRIVATE[ ]KEY-----", Severity.CRITICAL,
      "Remove EC private key from source code immediately."),
-    ("PGP Private Key Block", r"-----BEGIN PGP PRIVATE KEY BLOCK-----", Severity.CRITICAL,
+    ("PGP Private Key Block", r"-----BEGIN[ ]PGP[ ]PRIVATE[ ]KEY[ ]BLOCK-----", Severity.CRITICAL,
      "Remove PGP private key from source code immediately."),
-    ("OpenSSH Private Key", r"-----BEGIN OPENSSH PRIVATE KEY-----", Severity.CRITICAL,
+    ("OpenSSH Private Key", r"-----BEGIN[ ]OPENSSH[ ]PRIVATE[ ]KEY-----", Severity.CRITICAL,
      "Remove SSH private key from source code immediately."),
-    ("Certificate", r"-----BEGIN CERTIFICATE-----", Severity.MEDIUM,
+    ("Certificate", r"-----BEGIN[ ]CERTIFICATE-----", Severity.MEDIUM,
      "Public certificates are less sensitive, but verify this is intentional."),
 
     # Databases

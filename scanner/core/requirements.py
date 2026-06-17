@@ -32,17 +32,28 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 
-# Pinned tool versions — update here when a new tested release is adopted.
-# These are the single source of truth for every installer path (pip, go, npm,
-# dotnet, gem, winget, choco, GitHub release download).
+# Minimum tested tool versions — bump here when a newer release is validated.
+# Treated as a FLOOR, not an exact pin: version_ok() accepts anything >= the value,
+# so a newer tool is never downgraded and package managers that only expose "latest"
+# still satisfy the requirement. How each value is used per installer:
+#   * pip / npm / go / gem / dotnet  -> installed at this exact version (those
+#     registries keep every release, so an exact spec is reproducible and resolvable).
+#   * GitHub-release binaries        -> downloaded at this exact tag (all tags kept).
+#   * OS package managers (winget/choco/brew/scoop) -> NOT version-pinned; they install
+#     the latest available. Their manifests drop old versions, so requesting a specific
+#     one that has aged out fails the whole install (e.g. "No version found matching").
 PINNED_VERSIONS: Dict[str, str] = {
-    # GitHub-release binaries
+    # GitHub-release binaries (downloaded at this exact tag)
     "gitleaks":                "8.30.1",
     "trufflehog":              "3.95.5",
-    # Package-manager-only tools — pinned for winget/choco (brew/scoop left unversioned)
+    # Installed via OS package managers — value is a MINIMUM floor only (install latest).
+    # Keep these floors at or below what the package managers actually publish, or
+    # version_ok() will never be satisfiable and trigger a futile upgrade every run
+    # (e.g. UB-Mannheim's winget Tesseract trails the upstream release, so 5.x is the
+    # realistic floor — any modern Tesseract works for the OCR check).
     "trivy":                   "0.70.0",
-    "exiftool":                "12.76",
-    "tesseract":               "5.5.0",
+    "exiftool":                "12.0",
+    "tesseract":               "5.0.0",
     # pip tools
     "pip-audit":               "2.10.1",
     "pip-licenses":            "4.4.0",
@@ -63,6 +74,16 @@ PINNED_VERSIONS: Dict[str, str] = {
 def _pv(tool: str) -> str:
     """Return the pinned version string for `tool` (empty string if not pinned)."""
     return PINNED_VERSIONS.get(tool, "")
+
+
+def _version_tuple(v: str) -> tuple:
+    """Parse a version string into a tuple of ints for >= comparison.
+
+    Extracts the leading dotted-numeric run, ignoring a 'v' prefix and any suffix
+    (e.g. 'v1.2.3-rc1' -> (1, 2, 3)). Returns () when nothing numeric is found, which
+    callers treat as 'can't compare' rather than a failure."""
+    m = re.match(r"v?(\d+(?:\.\d+)*)", str(v or "").strip())
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
 
 
 def _python_exe() -> str:
@@ -131,53 +152,45 @@ INSTALL_COMMANDS = {
 # Standalone-binary installers via OS package managers, keyed by tool then manager.
 # A manager is used only if it is present on the system. (trufflehog is not published
 # on winget, so a winget-only machine reports it for manual install.)
-def _winget_version(tool: str) -> List[str]:
-    """Return ['--version', 'X.Y.Z'] when the tool has a pinned version, else []."""
-    v = _pv(tool)
-    return ["--version", v] if v else []
-
-def _choco_version(tool: str) -> List[str]:
-    v = _pv(tool)
-    return ["--version", v] if v else []
-
-
+#
+# These intentionally install the LATEST available version, not a pinned one:
+# winget/choco/brew/scoop manifests don't retain arbitrary old versions, so requesting
+# a specific release (e.g. `winget ... --version 0.70.0`) fails with "No version found
+# matching" the moment that release ages out of the manifest. PINNED_VERSIONS instead
+# acts as a >= floor enforced by version_ok(). GitHub-release downloads still pin a tag.
 BINARY_INSTALL_COMMANDS = {
     "gitleaks": {
         "scoop":  ["scoop", "install", "gitleaks"],
         "winget": ["winget", "install", "-e", "--id", "Gitleaks.Gitleaks",
-                   "--accept-source-agreements", "--accept-package-agreements",
-                   *_winget_version("gitleaks")],
-        "choco":  ["choco", "install", "gitleaks", "-y", *_choco_version("gitleaks")],
+                   "--accept-source-agreements", "--accept-package-agreements"],
+        "choco":  ["choco", "install", "gitleaks", "-y"],
         "brew":   ["brew", "install", "gitleaks"],
     },
     "trufflehog": {
         "scoop":  ["scoop", "install", "trufflehog"],
-        "choco":  ["choco", "install", "trufflehog", "-y", *_choco_version("trufflehog")],
+        "choco":  ["choco", "install", "trufflehog", "-y"],
         "brew":   ["brew", "install", "trufflesecurity/trufflehog/trufflehog"],
     },
     "tesseract": {  # OCR engine for asset_checker's text-in-image check
         "winget": ["winget", "install", "-e", "--id", "UB-Mannheim.TesseractOCR",
-                   "--accept-source-agreements", "--accept-package-agreements",
-                   *_winget_version("tesseract")],
+                   "--accept-source-agreements", "--accept-package-agreements"],
         "scoop":  ["scoop", "install", "tesseract"],
-        "choco":  ["choco", "install", "tesseract", "-y", *_choco_version("tesseract")],
+        "choco":  ["choco", "install", "tesseract", "-y"],
         "brew":   ["brew", "install", "tesseract"],
     },
     "trivy": {
         "brew":   ["brew", "install", "trivy"],
-        "winget": ["winget", "install", "-e", "--id", "Aquasecurity.Trivy",
-                   "--accept-source-agreements", "--accept-package-agreements",
-                   *_winget_version("trivy")],
+        "winget": ["winget", "install", "-e", "--id", "AquaSecurity.Trivy",
+                   "--accept-source-agreements", "--accept-package-agreements"],
         "scoop":  ["scoop", "install", "trivy"],
-        "choco":  ["choco", "install", "trivy", "-y", *_choco_version("trivy")],
+        "choco":  ["choco", "install", "trivy", "-y"],
     },
     "exiftool": {
         "brew":   ["brew", "install", "exiftool"],
         "winget": ["winget", "install", "-e", "--id", "OliverBetz.ExifTool",
-                   "--accept-source-agreements", "--accept-package-agreements",
-                   *_winget_version("exiftool")],
+                   "--accept-source-agreements", "--accept-package-agreements"],
         "scoop":  ["scoop", "install", "exiftool"],
-        "choco":  ["choco", "install", "exiftool", "-y", *_choco_version("exiftool")],
+        "choco":  ["choco", "install", "exiftool", "-y"],
     },
 }
 
@@ -365,14 +378,24 @@ class Requirement:
         return _query_cli_version(cmd_path, spec)  # type: ignore[name-defined]
 
     def version_ok(self) -> bool:
-        """Return True when no version is pinned, or when the installed version matches."""
+        """Return True when no minimum is pinned, or the installed version is >= it.
+
+        Versions are treated as a MINIMUM floor (newer is always fine): the scanner
+        never tries to downgrade a usable newer tool, and package managers that only
+        offer 'latest' still satisfy the requirement. Unparseable versions don't block."""
         pinned = PINNED_VERSIONS.get(self.command)
         if not pinned:
             return True
         installed = self.installed_version()
         if not installed:
             return True  # Can't determine — assume compatible rather than block
-        return installed.lstrip("v") == pinned.lstrip("v")
+        iv, pv = _version_tuple(installed), _version_tuple(pinned)
+        if not iv or not pv:
+            return True  # Unparseable on either side — don't block on a guess
+        n = max(len(iv), len(pv))
+        iv += (0,) * (n - len(iv))
+        pv += (0,) * (n - len(pv))
+        return iv >= pv
 
 
 def collect_requirements(config: dict, adapter_instances: list) -> List[Requirement]:
@@ -417,7 +440,7 @@ def collect_requirements(config: dict, adapter_instances: list) -> List[Requirem
             f"{' / '.join(_trivy_features)} (Trivy scanner)",
             (
                 "brew install trivy | scoop install trivy | "
-                "winget install Aquasecurity.Trivy | "
+                "winget install AquaSecurity.Trivy | "
                 "or see https://aquasecurity.github.io/trivy/latest/getting-started/installation/"
             ),
         ))
@@ -520,7 +543,7 @@ def print_requirements_report(reqs: List[Requirement], strict: bool = False) -> 
             if not r.version_ok():
                 pinned = PINNED_VERSIONS.get(r.command, "?")
                 version_mismatches.append(r)
-                print(f"  [VWRN]  {r.command:<24} installed {installed_ver}, pinned {pinned} — will auto-upgrade")
+                print(f"  [VWRN]  {r.command:<24} installed {installed_ver}, need >= {pinned} — will upgrade")
             else:
                 print(f"  [ OK ]  {r.command:<24} {r.feature}{ver_str}")
         elif r.optional:
