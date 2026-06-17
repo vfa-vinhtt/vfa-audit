@@ -74,6 +74,20 @@ pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
 
 Pin a released version by appending a tag, e.g. `…/vfa-audit.git@v1.0.0`.
 
+> **Windows: `vfa-audit` not recognized after `pip install`?** pip puts the
+> `vfa-audit.exe` command in Python's `Scripts\` folder, which is often **not on your
+> `PATH`** on Windows (macOS/Linux usually have it on PATH already). Two fixes:
+>
+> - **Use pipx instead of pip** (recommended) — `pipx ensurepath` adds the command to
+>   your PATH automatically. Re-open the terminal afterwards.
+> - **Or run it PATH-independently** — works anywhere the package is importable:
+>   ```bash
+>   python -m scanner --version
+>   python -m scanner /path/to/project --format console
+>   ```
+> To put the `vfa-audit` command itself on PATH, add the directory printed by
+> `python -c "import sysconfig; print(sysconfig.get_path('scripts'))"` to your `PATH`.
+
 Optional pip-installable helper tools come as **extras** — `assets` (fonttools +
 Pillow), `ocr` (pytesseract), `audit` (pip-audit + pip-licenses), or `all`:
 
@@ -87,26 +101,18 @@ pipx install "vfa-audit[all] @ git+https://github.com/vfa-vinhtt/vfa-audit.git"
 git clone https://github.com/vfa-vinhtt/vfa-audit.git
 cd vfa-audit
 
-```bash
-git clone <repo-url> vfa-audit
-cd vfa-audit
-
 python -m venv .venv
 # Windows:        .venv\Scripts\activate
 # Linux / macOS:  source .venv/bin/activate
 
 pip install -r requirements.txt   # only hard dependency is PyYAML
-python main.py /path/to/your/project --format html -o report
 ```
 
-Run the scanner:
+Run the scanner — any of these work the same way:
 
 ```bash
-# as a script
-python main.py /path/to/project --format html -o report
-
-# as a package
-python -m vfa_audit /path/to/project --format console
+python main.py /path/to/project --format html -o report   # entry-point script
+python -m scanner /path/to/project --format console        # as a module (no PATH needed)
 ```
 
 ### Standalone binary
@@ -419,8 +425,7 @@ The JSON `info` block records the scanner version and all external tool versions
 main.py                     # thin shim for running from a clone (-> scanner.cli)
 pyproject.toml              # packaging: installs the `vfa-audit` command, version (1.0.0), console script entry point
 config.yaml                 # configuration (project-local override)
-__main__.py                   # enables `python -m vfa_audit` invocation
-config.yaml                   # default configuration
+__main__.py                 # lets `python .` run the scanner from a clone (-> main)
 scripts/
   build.sh                    # macOS/Linux PyInstaller build → dist/vfa-audit
   build.bat                   # Windows PyInstaller build      → dist\vfa-audit.exe
@@ -428,6 +433,7 @@ scripts/
 .github/workflows/build.yml   # CI: builds binaries for macOS, Linux, Windows on tag push
 scanner/
   cli.py                    # entry point, CLI, orchestration, preflight
+  __main__.py               # enables `python -m scanner` (PATH-independent invocation)
   default_config.yaml       # config bundled into the package (fallback)
   core/
     file_scanner.py           # file walk, language detection, ignore handling
