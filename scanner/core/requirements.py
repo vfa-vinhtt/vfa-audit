@@ -65,6 +65,50 @@ def _pv(tool: str) -> str:
     return PINNED_VERSIONS.get(tool, "")
 
 
+def _python_exe() -> str:
+    """Return a Python interpreter path that accepts -m arguments.
+
+    In a frozen PyInstaller binary, sys.executable is the binary itself and
+    cannot be used as a Python interpreter. Locate the system Python instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for candidate in ("python3", "python"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return sys.executable  # last resort; caller handles failure gracefully
+
+
+_module_check_cache: Dict[str, bool] = {}
+
+
+def _system_python_has_module(module: str) -> bool:
+    """Return True if the system Python interpreter can import *module*.
+
+    Used in frozen mode where the bundled sys.executable is not a Python
+    interpreter and importlib.util.find_spec() only sees the frozen bundle.
+    Results are cached so the subprocess is only spawned once per module.
+    """
+    if module in _module_check_cache:
+        return _module_check_cache[module]
+    python = _python_exe()
+    if python == sys.executable:
+        # No system Python found; the import will also fail at run time.
+        _module_check_cache[module] = False
+        return False
+    try:
+        proc = subprocess.run(
+            [python, "-c", f"import {module}"],
+            capture_output=True, timeout=5,
+        )
+        result = proc.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        result = False
+    _module_check_cache[module] = result
+    return result
+
+
 # Programmatic installers, keyed by tool command. Only tools with a reliable,
 # non-interactive installer are listed; anything else (standalone binaries like
 # gitleaks/trufflehog, or runtimes like npm/dotnet/composer/go) must be installed
@@ -292,9 +336,12 @@ class Requirement:
     def installed(self) -> bool:
         if self.network_only:
             return True
-        # Python tools are run via `python -m <module>`, so detect them the same
-        # way (importable in the scanner's interpreter) rather than via PATH.
+        # Python tools are run via `python -m <module>`. In a frozen binary,
+        # sys.executable is not Python, so we delegate to the system Python and
+        # check there rather than probing the frozen bundle via find_spec.
         if self.module:
+            if getattr(sys, "frozen", False):
+                return _system_python_has_module(self.module)
             return importlib.util.find_spec(self.module) is not None
         return resolve_command(self.command) is not None
 
@@ -658,6 +705,10 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
 
     for r in missing:
         cmd = INSTALL_COMMANDS.get(r.command)
+        # INSTALL_COMMANDS bakes in sys.executable at import time; when frozen,
+        # that value is the binary itself (not a Python interpreter). Swap it out.
+        if cmd and cmd[0] == sys.executable and getattr(sys, "frozen", False):
+            cmd = [_python_exe()] + list(cmd[1:])
         via_pkg_mgr = False
         if not cmd:
             manager = _pick_manager(r.command, binary_installer)
@@ -697,7 +748,7 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
         # PEP 668: macOS/Linux with an externally-managed Python (e.g. Homebrew) blocks
         # plain `pip install`. Retry once with --break-system-packages so the user does
         # not need to pre-configure pip or activate a venv just to use the scanner.
-        if proc.returncode != 0 and "externally-managed-environment" in output and cmd[0] == sys.executable:
+        if proc.returncode != 0 and "externally-managed-environment" in output and len(cmd) > 2 and cmd[1:3] == ["-m", "pip"]:
             retry_cmd = cmd + ["--break-system-packages"]
             print(f"            pip: externally-managed-environment — retrying with --break-system-packages")
             try:
@@ -721,6 +772,8 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
     # New console scripts / modules may have appeared; refresh import caches and re-check.
     # A successful install command counts as resolved even if PATH isn't refreshed in-process.
     importlib.invalidate_caches()
+    # Clear the frozen-mode module cache so re-checks see newly installed packages.
+    _module_check_cache.clear()
     return [r for r in missing if r.command not in installed_ok and not r.installed]
 
 
