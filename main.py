@@ -160,7 +160,7 @@ def main():
     parser.add_argument("path", nargs="?", default=".", help="Path to the project to scan. Defaults to current directory.")
     parser.add_argument("--config", default="config.yaml", help="Path to the configuration file.")
     parser.add_argument("-o", "--output", default=None, help="Output basename or directory. Defaults to '<YYYYMMDD_HHmm>_<project-name>' in the current directory.")
-    parser.add_argument("--format", choices=["json", "md", "html", "console", "policy"], default="console",
+    parser.add_argument("--format", choices=["json", "md", "html", "console", "policy"], default="json",
                         help="Output format. 'policy' writes blockers/review-required/warnings JSON files into a directory.")
     parser.add_argument("--zip", action="store_true",
                         help="Compress the generated output (directory for 'policy', file otherwise) into a zip archive.")
@@ -219,8 +219,14 @@ def main():
     _project_slug = re.sub(r"[^\w\-]", "_", project_info.get("project_name", "project"))
     _auto_stem = f"{_timestamp}_{_project_slug}"
 
+    # Default output: <tool_dir>/report/<timestamp>_<project>.
+    # Tool dir is the directory containing the frozen binary (sys.executable when
+    # PyInstaller) or the directory containing main.py when running from source.
+    _tool_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    _default_output_dir = _tool_dir / "report"
+
     if args.output is None:
-        output_basename = Path(_auto_stem)
+        output_basename = _default_output_dir / _auto_stem
     else:
         _out = Path(args.output)
         if _out.is_dir():

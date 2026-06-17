@@ -2,10 +2,15 @@
 # PyInstaller spec for vfa-audit
 # Build: pyinstaller scripts/vfa_audit.spec --distpath dist --workpath dist/work --clean
 
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
+
+_ver_match = re.search(r'^VERSION\s*=\s*"([^"]+)"', (ROOT / 'main.py').read_text(), re.MULTILINE)
+_version = _ver_match.group(1) if _ver_match else "0.0.0"
+_binary_name = f"vfa-audit_v{_version}"
 
 a = Analysis(
     [str(ROOT / 'main.py')],
@@ -60,7 +65,7 @@ exe = EXE(
     a.scripts,
     a.binaries,
     a.datas,
-    name='vfa-audit',
+    name=_binary_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
