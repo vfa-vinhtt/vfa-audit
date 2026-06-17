@@ -1,0 +1,78 @@
+name: Build Standalone Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:    # Allow manual trigger from GitHub UI
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            artifact_name: vfa-audit-macos
+          - os: ubuntu-latest
+            artifact_name: vfa-audit-linux
+          - os: windows-latest
+            artifact_name: vfa-audit-windows.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: pip install pyinstaller PyYAML Pillow fonttools pytesseract
+
+      - name: Build binary (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: |
+          pyinstaller build/vfa_audit.spec \
+            --distpath build/dist \
+            --workpath build/work \
+            --clean --noconfirm
+          mv build/dist/vfa-audit ${{ matrix.artifact_name }}
+
+      - name: Build binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller build\vfa_audit.spec `
+            --distpath build\dist `
+            --workpath build\work `
+            --clean --noconfirm
+          Move-Item build\dist\vfa-audit.exe ${{ matrix.artifact_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/vfa-audit-macos/vfa-audit-macos
+            artifacts/vfa-audit-linux/vfa-audit-linux
+            artifacts/vfa-audit-windows.exe/vfa-audit-windows.exe
+          generate_release_notes: true

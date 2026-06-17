@@ -13,6 +13,21 @@ Runs on **Windows, Linux, and macOS** (Python 3.10+).
 
 ---
 
+## Audit purpose
+
+Answers four questions before delivering a product or reviewing code received from a partner / third party:
+
+| Question | Plugin | Tools |
+|----------|--------|-------|
+| **Sensitive information** — Does the source code contain secrets? (passwords, AWS keys, tokens, private keys…) | `secret_checker` | regex + entropy, Gitleaks (git history), TruffleHog, Trivy |
+| **CVE** — Do the dependencies have known security vulnerabilities? | `dependency_checker` | OSV API, pip-audit / npm audit / govulncheck / dotnet / composer, Trivy |
+| **Font license** — Are any fonts used without a commercial license? | `asset_checker` | fonttools (fsType embedding rights), ExifTool (copyright/license text), SHA256 |
+| **Library license** — Are dependency licenses compatible with commercial use? | `license_checker` | lockfile/manifest content, pip-licenses / license-checker / go-licenses…, Trivy `--license-full` |
+
+Additional checks: **PII** in source code, **insecure configuration**, **`.env` exposure**, **`.gitignore` gaps**.
+
+---
+
 ## Highlights
 
 **What it detects** — eight independent checks:

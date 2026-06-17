@@ -74,6 +74,9 @@ plugins:
       trufflehog:
         enabled: true   # set true to also run trufflehog (must be installed + on PATH)
         # https://github.com/trufflesecurity/trufflehog
+      trivy:
+        enabled: true   # second-layer secret scan via Trivy (must be installed + on PATH)
+        # https://github.com/aquasecurity/trivy
 
   # Dependency Checker config
   dependency_checker:
@@ -86,6 +89,11 @@ plugins:
       # Use language-specific audit tools (e.g., 'npm audit', 'pip-audit')
       project_audit:
         enabled: true
+      # Trivy CVE scan — detects vulnerabilities from project files directly,
+      # independent of adapters. Classifies findings: CRITICAL/HIGH + fix → CRITICAL;
+      # CRITICAL/HIGH + no fix or UNKNOWN severity → HIGH; MEDIUM/LOW mapped directly.
+      trivy:
+        enabled: true
   
   # Env Checker config
   env_checker:
@@ -97,6 +105,8 @@ plugins:
     tools:
       content: true
       project_tool: true
+      trivy: true   # Trivy --license-full scan: catches licenses that adapters miss
+                    # (e.g. vendored code, packages without manifest license field)
     deny:
       - "GPL-2.0-only"
       - "AGPL-3.0-only"
@@ -126,6 +136,10 @@ plugins:
       image_metadata: true      # read image EXIF/IPTC/XMP copyright & usage terms (pip: Pillow)
       ocr_text_in_image: true  # OCR images to flag rendered text for MANUAL font-license review.
                                 # The font itself cannot be auto-identified. Needs tesseract + pytesseract.
+      exiftool_metadata: true   # read font copyright/license text fields via ExifTool (brew/apt/choco/scoop).
+                                # Runs alongside fonttools: catches 'non-commercial', 'trial', GPL text
+                                # in Copyright/LicenseInfo/UsageTerms that fsType alone cannot detect.
+                                # SHA256 of each font is embedded in findings for renamed-font tracking.
 
   # Gitignore Checker
   gitignore_checker:

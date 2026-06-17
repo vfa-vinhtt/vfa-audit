@@ -16,6 +16,7 @@ from typing import List, Tuple
 
 from .base_plugin import BasePlugin, Finding, Severity
 from ..core.requirements import resolve_command
+from ..core.trivy_adapter import run_trivy
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pattern definitions: (name, regex, severity, recommendation)
@@ -173,6 +174,7 @@ class SecretChecker(BasePlugin):
             "python_regex": self._scan_with_python_regex,
             "gitleaks": self._scan_with_gitleaks,
             "trufflehog": self._scan_with_trufflehog,
+            "trivy": self._scan_with_trivy_secrets,
         }
         enabled_tools = [t for t, s in tool_config.items() if s.get("enabled") and t in dispatch]
 
@@ -292,6 +294,7 @@ class SecretChecker(BasePlugin):
                 f"paths = [\n  {paths}\n]\n"
             )
         config_path = self._write_temp(config_text, "gitleaks-cfg-", ".toml")
+        is_git_repo = bool(context.get("is_git_repo"))
         try:
             command = [
                 resolve_command("gitleaks") or "gitleaks",
@@ -299,8 +302,9 @@ class SecretChecker(BasePlugin):
                 "--source", str(root),
                 "--report-format", "json",
                 "--report-path", report_path,
-                "--no-git",  # scan files, not git history
             ]
+            if not is_git_repo:
+                command.append("--no-git")
             if config_path:
                 command += ["--config", config_path]
             result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -460,6 +464,40 @@ class SecretChecker(BasePlugin):
                     os.unlink(exclude_file)
                 except OSError:
                     pass
+        return self.findings
+
+    def _scan_with_trivy_secrets(self, root: Path, files: List[Path], context: dict) -> List[Finding]:
+        """Run Trivy secret scanner as a second detection layer alongside gitleaks."""
+        self.findings = []
+        try:
+            result = run_trivy(root, "secret")
+        except RuntimeError:
+            return [self._tool_not_found_finding("trivy")]
+
+        if result is None:
+            self.add_finding(
+                severity=Severity.WARNING,
+                title="Trivy secrets scan failed",
+                description="Trivy ran but produced no output.",
+                recommendation="Check that trivy is installed and can access the project directory.",
+                tags=["tool-failure", "trivy"],
+            )
+            return self.findings
+
+        for res in result.get("Results") or []:
+            target = res.get("Target", "")
+            for secret in res.get("Secrets") or []:
+                rule = secret.get("RuleID", "secret")
+                self.add_finding(
+                    severity=Severity.HIGH,
+                    title=f"Trivy: {secret.get('Title') or rule}",
+                    description=f"Secret detected in {target} at line {secret.get('StartLine')}.",
+                    recommendation=f"Rule '{rule}'. Rotate the secret and remove it from source.",
+                    file=self._rel_path(target, root),
+                    line=secret.get("StartLine"),
+                    evidence=self._mask_value(secret.get("Match") or ""),
+                    tags=["secret", "trivy", rule],
+                )
         return self.findings
 
     def _tool_not_found_finding(self, tool_name: str) -> Finding:

@@ -87,7 +87,10 @@ class NodeAdapter(BaseAdapter):
                         if not path: continue
                         name = path.split("node_modules/")[-1]
                         if name in dep_info:
-                            dep_info[name]["license"] = info.get("license", "UNKNOWN")
+                            lic = info.get("license", "UNKNOWN")
+                            if isinstance(lic, list):
+                                lic = ", ".join(lic) or "UNKNOWN"
+                            dep_info[name]["license"] = lic
                     return dep_info
                 dependencies = lock_data.get("dependencies", {})
                 self._walk_npm_v1_lock(dependencies, dep_info)
@@ -100,7 +103,10 @@ class NodeAdapter(BaseAdapter):
         """Recursively walk the dependency tree of an npm v1 lock file."""
         for name, info in node.items():
             if name in dep_info:
-                dep_info[name]["license"] = info.get("license", "UNKNOWN")
+                lic = info.get("license", "UNKNOWN")
+                if isinstance(lic, list):
+                    lic = ", ".join(lic) or "UNKNOWN"
+                dep_info[name]["license"] = lic
             if "dependencies" in info:
                 self._walk_npm_v1_lock(info["dependencies"], dep_info)
 
@@ -146,7 +152,9 @@ class NodeAdapter(BaseAdapter):
         for name_ver, info in data.items():
             pkg_name = name_ver.rsplit('@', 1)[0]
             license_str = info.get("licenses", "UNKNOWN")
-            
+            if isinstance(license_str, list):
+                license_str = ", ".join(license_str) or "UNKNOWN"
+
             licenses = [l.strip() for l in re.split(r'OR|AND|[()/]', license_str) if l.strip()]
             if not licenses: licenses = [license_str]
 

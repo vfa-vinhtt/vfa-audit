@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Dict
 
 from .base_plugin import BasePlugin, Finding, Severity
+from ..core.trivy_adapter import run_trivy
 
 KNOWN_MALICIOUS_PACKAGES: Dict[str, str] = {
     "event-stream": "Contained malicious code injected via maintainer takeover (2018)",
@@ -74,6 +75,11 @@ class DependencyChecker(BasePlugin):
         packages = adapter_context.get("packages", {})
         tool_config = self.config.get("tools", {})
 
+        # Trivy detects packages from project files independently of adapters, so it
+        # runs even when no adapter-detected packages are available.
+        if tool_config.get("trivy", {}).get("enabled", False):
+            self._scan_with_trivy_vuln(root)
+
         if not packages:
             self.add_finding(severity=Severity.INFO, title="No dependency manifests found", description="Could not find package.json, requirements.txt, pom.xml, or other manifests.", recommendation="Ensure dependency files are present in the project root.", tags=["dependency"])
             return self.findings
@@ -131,6 +137,85 @@ class DependencyChecker(BasePlugin):
                 # else: tool not installed -> the preflight check reports that separately.
 
         return self.findings
+
+    def _scan_with_trivy_vuln(self, root: Path) -> None:
+        """Run Trivy vuln scanner and classify findings by the vinhtt-tool CVE policy:
+        CRITICAL/HIGH + fix available → CRITICAL; CRITICAL/HIGH + no fix or UNKNOWN → HIGH;
+        MEDIUM → MEDIUM; LOW → LOW.
+        """
+        original_name = self.name
+        self.name = "dependency_checker:trivy"
+        try:
+            result = run_trivy(root, "vuln")
+        except RuntimeError:
+            self.add_finding(
+                severity=Severity.WARNING,
+                title="Trivy CVE scan failed: tool not found",
+                description="trivy was configured but not found on PATH.",
+                recommendation=(
+                    "brew install trivy | scoop install trivy | "
+                    "winget install Aquasecurity.Trivy"
+                ),
+                tags=["tool-failure", "trivy"],
+            )
+            self.name = original_name
+            return
+
+        if result is None:
+            self.add_finding(
+                severity=Severity.WARNING,
+                title="Trivy CVE scan failed",
+                description="Trivy ran but produced no output.",
+                recommendation="Ensure trivy is installed and functioning correctly.",
+                tags=["tool-failure", "trivy"],
+            )
+            self.name = original_name
+            return
+
+        vuln_count = 0
+        for res in result.get("Results") or []:
+            for vuln in res.get("Vulnerabilities") or []:
+                vuln_count += 1
+                cve_id = vuln.get("VulnerabilityID", "UNKNOWN")
+                pkg = vuln.get("PkgName", "?")
+                severity_str = (vuln.get("Severity") or "UNKNOWN").upper()
+                fixed = (vuln.get("FixedVersion") or "").strip()
+                title_str = vuln.get("Title") or ""
+
+                if severity_str in ("CRITICAL", "HIGH"):
+                    sev = Severity.CRITICAL if fixed else Severity.HIGH
+                elif severity_str == "MEDIUM":
+                    sev = Severity.MEDIUM
+                elif severity_str == "LOW":
+                    sev = Severity.LOW
+                else:  # UNKNOWN severity
+                    sev = Severity.HIGH
+
+                fix_note = f" Fix: upgrade to {fixed}." if fixed else " No fix available yet."
+                self.add_finding(
+                    severity=sev,
+                    title=f"Trivy CVE: {cve_id} in {pkg}",
+                    description=(
+                        f"{title_str or cve_id} — {pkg}@{vuln.get('InstalledVersion', '?')} "
+                        f"(Severity: {severity_str}).{fix_note}"
+                    ),
+                    recommendation=(
+                        f"Upgrade {pkg} to {fixed}." if fixed
+                        else f"No fix yet for {cve_id}. Monitor for updates or apply mitigations."
+                    ),
+                    evidence=f"{pkg}@{vuln.get('InstalledVersion', '?')}",
+                    tags=["dependency", "vulnerability", "cve", "trivy", cve_id.lower()],
+                )
+
+        if vuln_count == 0:
+            self.add_finding(
+                severity=Severity.INFO,
+                title="Trivy CVE scan completed - no vulnerabilities found",
+                description="Trivy scanned the project and found no known CVEs.",
+                recommendation="Re-run regularly; new advisories are published continuously.",
+                tags=["dependency", "trivy", "scan-summary"],
+            )
+        self.name = original_name
 
     @staticmethod
     def _audit_tool_present(tool: str) -> bool:
