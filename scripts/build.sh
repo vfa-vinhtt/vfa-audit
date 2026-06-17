@@ -20,7 +20,7 @@ pyinstaller scripts/vfa_audit.spec \
     --clean \
     --noconfirm
 
-BINARY=$(ls dist/vfa-audit_v* 2>/dev/null | head -1)
+BINARY=dist/vfa-audit
 echo ""
 echo "==> Build complete: $BINARY"
 echo "    Size: $(du -sh "$BINARY" | cut -f1)"
