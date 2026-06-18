@@ -181,7 +181,7 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("path", nargs="?", default=".", help="Path to the project to scan. Defaults to current directory.")
     parser.add_argument("--config", default=None, help="Path to the configuration file (defaults to ./config.yaml, then the bundled default).")
-    parser.add_argument("-o", "--output", default=None, help="Output basename or directory. Defaults to '<YYYYMMDD_HHmm>_<project-name>' under './report'.")
+    parser.add_argument("-o", "--output", default=None, help="Output basename or directory. Defaults to '<YYYYMMDD_HHmm>_<project-name>' under './vfa-audit-report'.")
     parser.add_argument("--format", choices=["json", "md", "html", "console", "policy"], default="json",
                         help="Output format. 'policy' writes blockers/review-required/warnings JSON files into a directory.")
     parser.add_argument("--zip", action="store_true",
@@ -211,7 +211,7 @@ def main():
     # language-agnostic dirs from config + per-language dirs declared by the adapters.
     fs_config = dict(config.get("file_scanner", {}))
     fs_config["ignore_dirs"] = sorted(
-        set(fs_config.get("ignore_dirs", [])) | collect_adapter_ignore_dirs()
+        set(fs_config.get("ignore_dirs", [])) | collect_adapter_ignore_dirs() | {"vfa-audit-report"}
     )
     file_scanner = FileScanner(config=fs_config)
     git_scanner = GitScanner(root)
@@ -244,7 +244,7 @@ def main():
     # directory containing the frozen binary (sys.executable when PyInstaller) or the
     # current working directory when running from source / as an installed command.
     _tool_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
-    _default_output_dir = _tool_dir / "report"
+    _default_output_dir = _tool_dir / "vfa-audit-report"
 
     if args.output is None:
         output_basename = _default_output_dir / _auto_stem
@@ -323,17 +323,6 @@ def main():
             binary_installer=preflight_cfg.get("binary_installer", "auto"),
             bootstrap_runtimes=preflight_cfg.get("bootstrap_runtimes", True),
         )
-
-        # Auto-upgrade tools that are installed but at the wrong version — always,
-        # no flag needed. pip/go/npm install with a pinned version spec upgrades
-        # or downgrades to the exact pinned release.
-        if version_mismatches:
-            still_wrong = attempt_auto_install(version_mismatches, **_installer_kwargs)
-            if still_wrong:
-                names = ", ".join(r.command for r in still_wrong)
-                print(f"  Could not upgrade: {names} — scan continues with installed version.")
-            else:
-                print("  All tools upgraded to pinned versions.")
 
         # Opt-in auto-install of missing tools, then re-check what remains.
         if missing and (args.install_missing or preflight_cfg.get("auto_install", False)):

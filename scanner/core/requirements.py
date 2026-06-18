@@ -32,49 +32,29 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 
-# Minimum tested tool versions — bump here when a newer release is validated.
-# Treated as a FLOOR, not an exact pin: version_ok() accepts anything >= the value,
-# so a newer tool is never downgraded and package managers that only expose "latest"
-# still satisfy the requirement. How each value is used per installer:
-#   * pip / npm / go / gem / dotnet  -> installed at this exact version (those
-#     registries keep every release, so an exact spec is reproducible and resolvable).
-#   * GitHub-release binaries        -> downloaded at this exact tag (all tags kept).
-#   * OS package managers (winget/choco/brew/scoop) -> NOT version-pinned; they install
-#     the latest available. Their manifests drop old versions, so requesting a specific
-#     one that has aged out fails the whole install (e.g. "No version found matching").
+# Fallback floor versions used only when the remote registry is unreachable
+# (network offline, rate-limited, etc.).  _fetch_remote_version() returns the real
+# latest version when the registry is reachable; these values are only used as a
+# last resort so version_ok() never hard-blocks on a transient network failure.
+# INSTALL_COMMANDS now always installs the latest; GitHub-release downloads always
+# fetch the latest release — these values are no longer used for installs.
 PINNED_VERSIONS: Dict[str, str] = {
-    # GitHub-release binaries (downloaded at this exact tag)
     "gitleaks":                "8.30.1",
     "trufflehog":              "3.95.5",
-    # Installed via OS package managers — value is a MINIMUM floor only (install latest).
-    # Keep these floors at or below what the package managers actually publish, or
-    # version_ok() will never be satisfiable and trigger a futile upgrade every run
-    # (e.g. UB-Mannheim's winget Tesseract trails the upstream release, so 5.x is the
-    # realistic floor — any modern Tesseract works for the OCR check).
     "trivy":                   "0.70.0",
     "exiftool":                "12.0",
     "tesseract":               "5.0.0",
-    # pip tools
     "pip-audit":               "2.10.1",
     "pip-licenses":            "4.4.0",
     "fonttools":               "4.63.0",
     "Pillow":                  "12.2.0",
     "pytesseract":             "0.3.13",
-    # npm tools
     "license-checker":         "25.0.1",
-    # go tools
     "govulncheck":             "0.2.4",
     "go-licenses":             "1.6.0",
-    # dotnet tools
     "dotnet-project-licenses": "2.8.3",
-    # gem tools
     "license_finder":          "7.2.1",
 }
-
-def _pv(tool: str) -> str:
-    """Return the pinned version string for `tool` (empty string if not pinned)."""
-    return PINNED_VERSIONS.get(tool, "")
-
 
 def _version_tuple(v: str) -> tuple:
     """Parse a version string into a tuple of ints for >= comparison.
@@ -136,17 +116,16 @@ def _system_python_has_module(module: str) -> bool:
 # manually. Toolchain-based installers (go/npm/dotnet/gem) only work if that
 # toolchain is already present.
 INSTALL_COMMANDS = {
-    "pip-audit":               [sys.executable, "-m", "pip", "install", f"pip-audit=={_pv('pip-audit')}"],
-    "pip-licenses":            [sys.executable, "-m", "pip", "install", f"pip-licenses=={_pv('pip-licenses')}"],
-    "go-licenses":             ["go", "install", f"github.com/google/go-licenses@v{_pv('go-licenses')}"],
-    "govulncheck":             ["go", "install", f"golang.org/x/vuln/cmd/govulncheck@v{_pv('govulncheck')}"],
-    "license-checker":         ["npm", "install", "-g", f"license-checker@{_pv('license-checker')}"],
-    "dotnet-project-licenses": ["dotnet", "tool", "install", "--global", "dotnet-project-licenses",
-                                "--version", _pv("dotnet-project-licenses")],
-    "license_finder":          ["gem", "install", "license_finder", "--version", _pv("license_finder")],
-    "fonttools":               [sys.executable, "-m", "pip", "install", f"fonttools=={_pv('fonttools')}"],
-    "Pillow":                  [sys.executable, "-m", "pip", "install", f"Pillow=={_pv('Pillow')}"],
-    "pytesseract":             [sys.executable, "-m", "pip", "install", f"pytesseract=={_pv('pytesseract')}"],
+    "pip-audit":               [sys.executable, "-m", "pip", "install", "pip-audit"],
+    "pip-licenses":            [sys.executable, "-m", "pip", "install", "pip-licenses"],
+    "go-licenses":             ["go", "install", "github.com/google/go-licenses@latest"],
+    "govulncheck":             ["go", "install", "golang.org/x/vuln/cmd/govulncheck@latest"],
+    "license-checker":         ["npm", "install", "-g", "license-checker"],
+    "dotnet-project-licenses": ["dotnet", "tool", "install", "--global", "dotnet-project-licenses"],
+    "license_finder":          ["gem", "install", "license_finder"],
+    "fonttools":               [sys.executable, "-m", "pip", "install", "fonttools"],
+    "Pillow":                  [sys.executable, "-m", "pip", "install", "Pillow"],
+    "pytesseract":             [sys.executable, "-m", "pip", "install", "pytesseract"],
 }
 
 # Standalone-binary installers via OS package managers, keyed by tool then manager.
@@ -202,6 +181,114 @@ GITHUB_RELEASES = {
     "gitleaks": "gitleaks/gitleaks",
     "trufflehog": "trufflesecurity/trufflehog",
 }
+
+# GitHub owner/repo for ALL tools distributed as release binaries — used for remote
+# latest-version lookup (superset of GITHUB_RELEASES which only covers auto-download).
+_GITHUB_RELEASE_REPOS: Dict[str, str] = {
+    **GITHUB_RELEASES,
+    "trivy":     "aquasecurity/trivy",
+    "tesseract": "tesseract-ocr/tesseract",
+    "exiftool":  "exiftool/exiftool",
+}
+
+# Registry mappings for remote latest-version lookup, keyed by tool command name.
+_PYPI_PACKAGES: Dict[str, str] = {
+    "pip-audit":    "pip-audit",
+    "pip-licenses": "pip-licenses",
+    "fonttools":    "fonttools",
+    "Pillow":       "Pillow",
+    "pytesseract":  "pytesseract",
+}
+_NPM_PACKAGES: Dict[str, str] = {
+    "license-checker": "license-checker",
+}
+_GO_MODULES: Dict[str, str] = {
+    "govulncheck": "golang.org/x/vuln",
+    "go-licenses": "github.com/google/go-licenses",
+}
+_NUGET_PACKAGES: Dict[str, str] = {
+    "dotnet-project-licenses": "dotnet-project-licenses",
+}
+_GEM_PACKAGES: Dict[str, str] = {
+    "license_finder": "license_finder",
+}
+
+_remote_version_cache: Dict[str, Optional[str]] = {}
+
+
+def _fetch_remote_version(tool: str) -> Optional[str]:
+    """Return the latest published version of *tool* from its upstream registry.
+
+    Queries PyPI, npm, Go proxy, NuGet, RubyGems, or GitHub releases as appropriate.
+    Results are cached in-process. Falls back to PINNED_VERSIONS when the registry
+    is unreachable; returns None if neither source knows the tool."""
+    if tool in _remote_version_cache:
+        return _remote_version_cache[tool]
+
+    version: Optional[str] = None
+    try:
+        if tool in _PYPI_PACKAGES:
+            req = urllib.request.Request(
+                f"https://pypi.org/pypi/{_PYPI_PACKAGES[tool]}/json",
+                headers={"User-Agent": "security-scanner"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                version = json.loads(resp.read())["info"]["version"]
+
+        elif tool in _NPM_PACKAGES:
+            req = urllib.request.Request(
+                f"https://registry.npmjs.org/{_NPM_PACKAGES[tool]}/latest",
+                headers={"User-Agent": "security-scanner"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                version = json.loads(resp.read()).get("version")
+
+        elif tool in _GO_MODULES:
+            req = urllib.request.Request(
+                f"https://proxy.golang.org/{_GO_MODULES[tool]}/@latest",
+                headers={"User-Agent": "security-scanner"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                version = json.loads(resp.read()).get("Version", "").lstrip("v") or None
+
+        elif tool in _NUGET_PACKAGES:
+            req = urllib.request.Request(
+                f"https://api.nuget.org/v3-flatcontainer/{_NUGET_PACKAGES[tool].lower()}/index.json",
+                headers={"User-Agent": "security-scanner"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                versions = json.loads(resp.read()).get("versions", [])
+                version = versions[-1] if versions else None
+
+        elif tool in _GEM_PACKAGES:
+            req = urllib.request.Request(
+                f"https://rubygems.org/api/v1/gems/{_GEM_PACKAGES[tool]}.json",
+                headers={"User-Agent": "security-scanner"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                version = json.loads(resp.read()).get("version")
+
+        elif tool in _GITHUB_RELEASE_REPOS:
+            repo = _GITHUB_RELEASE_REPOS[tool]
+            token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+            headers = {"Accept": "application/vnd.github+json", "User-Agent": "security-scanner"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/releases/latest", headers=headers
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                tag = json.loads(resp.read()).get("tag_name", "")
+                version = tag.lstrip("v") or None
+
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError):
+        pass
+
+    if version is None:
+        version = PINNED_VERSIONS.get(tool)
+    _remote_version_cache[tool] = version
+    return version
+
 
 # Foundation runtimes we can bootstrap, ONLY via signed package managers (never remote
 # scripts). Currently just Go, so `go install` fallbacks can work on a bare machine.
@@ -378,24 +465,24 @@ class Requirement:
         return _query_cli_version(cmd_path, spec)  # type: ignore[name-defined]
 
     def version_ok(self) -> bool:
-        """Return True when no minimum is pinned, or the installed version is >= it.
+        """Return True when the installed version is up to date with the remote latest.
 
-        Versions are treated as a MINIMUM floor (newer is always fine): the scanner
-        never tries to downgrade a usable newer tool, and package managers that only
-        offer 'latest' still satisfy the requirement. Unparseable versions don't block."""
-        pinned = PINNED_VERSIONS.get(self.command)
-        if not pinned:
+        Fetches the latest published version from the upstream registry; falls back to
+        PINNED_VERSIONS when the registry is unreachable. Returns True (don't block)
+        when the target version is unknown or either side is unparseable."""
+        target = _fetch_remote_version(self.command)
+        if not target:
             return True
         installed = self.installed_version()
         if not installed:
-            return True  # Can't determine — assume compatible rather than block
-        iv, pv = _version_tuple(installed), _version_tuple(pinned)
-        if not iv or not pv:
-            return True  # Unparseable on either side — don't block on a guess
-        n = max(len(iv), len(pv))
+            return True
+        iv, tv = _version_tuple(installed), _version_tuple(target)
+        if not iv or not tv:
+            return True
+        n = max(len(iv), len(tv))
         iv += (0,) * (n - len(iv))
-        pv += (0,) * (n - len(pv))
-        return iv >= pv
+        tv += (0,) * (n - len(tv))
+        return iv >= tv
 
 
 def collect_requirements(config: dict, adapter_instances: list) -> List[Requirement]:
@@ -541,9 +628,9 @@ def print_requirements_report(reqs: List[Requirement], strict: bool = False) -> 
             installed_ver = r.installed_version()
             ver_str = f" ({installed_ver})" if installed_ver else ""
             if not r.version_ok():
-                pinned = PINNED_VERSIONS.get(r.command, "?")
+                latest = _fetch_remote_version(r.command) or "?"
                 version_mismatches.append(r)
-                print(f"  [VWRN]  {r.command:<24} installed {installed_ver}, need >= {pinned} — will upgrade")
+                print(f"  [WARN]  {r.command:<24} installed {installed_ver}, latest {latest} — consider upgrading")
             else:
                 print(f"  [ OK ]  {r.command:<24} {r.feature}{ver_str}")
         elif r.optional:
@@ -562,12 +649,12 @@ def print_requirements_report(reqs: List[Requirement], strict: bool = False) -> 
             print(f"\n{len(blocking)} tool(s) missing - those specific checks will be skipped "
                   "(the scan still runs).")
     elif version_mismatches:
-        print(f"\n{len(version_mismatches)} tool(s) need upgrading — auto-upgrading now.")
+        print(f"\n{len(version_mismatches)} tool(s) have updates available — scan continues with installed version.")
     elif optional_missing:
         print(f"\n{len(optional_missing)} optional tool(s) missing - those checks are skipped; the scan proceeds.")
     else:
         print("All required tools are installed.")
-    return blocking, version_mismatches
+    return blocking, []
 
 
 def print_setup_guide(missing: List[Requirement]) -> None:
@@ -746,10 +833,8 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
         # manager or runtime needed). Handled here since it's not a subprocess command.
         if not cmd and r.command in GITHUB_RELEASES:
             repo = GITHUB_RELEASES[r.command]
-            version = PINNED_VERSIONS.get(r.command)
-            tag_str = f"v{version}" if version else "latest"
-            print(f"  [DOWNLOAD] {r.command}  <-  github.com/{repo} ({tag_str})")
-            ok, detail = install_from_github_release(r.command, repo, version)
+            print(f"  [DOWNLOAD] {r.command}  <-  github.com/{repo} (latest)")
+            ok, detail = install_from_github_release(r.command, repo)
             if ok:
                 print(f"            ok -> {detail}")
                 installed_ok.add(r.command)
