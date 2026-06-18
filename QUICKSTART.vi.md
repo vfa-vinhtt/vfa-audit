@@ -44,8 +44,6 @@ source ~/.venvs/vfa-audit/bin/activate
 pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
 ```
 
-> **Lưu ý:** Các công cụ bổ sung (như `pip-audit`, `fonttools`, `gitleaks`, `trivy`...) **không cần cài trước** — scanner sẽ kiểm tra và báo thiếu khi chạy. Dùng `--install-missing` để tự động cài, hoặc cài thủ công theo hướng dẫn in ra.
-
 ---
 
 ## 3. Chạy scanner
@@ -56,45 +54,11 @@ pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
 cd /path/to/your-project
 ```
 
-### Lệnh cơ bản
-
-> **Lưu ý:** Phải đảm bảo venv đang active trước khi chạy (thấy `(vfa-audit)` ở đầu dòng terminal). Nếu chưa active, chạy lại lệnh activate ở bước 1.
-
 ```bash
 vfa-audit
 ```
 
-Scanner sẽ scan thư mục hiện tại và lưu kết quả vào `./vfa-audit-report/`. Thư mục này được tự động bỏ qua khi scan, tránh scanner quét vào report của chính nó.
-
-### Các tùy chọn thường dùng
-
-| Tùy chọn | Mô tả |
-|----------|-------|
-| `--format json` | Output JSON *(mặc định)* |
-| `--format html` | Output HTML report |
-| `--format md` | Output Markdown |
-| `--format console` | In kết quả ra terminal |
-| `--format policy` | Tách kết quả thành 3 file: blockers / review-required / warnings |
-| `-o ./my-report` | Chỉ định tên hoặc thư mục output |
-| `--zip` | Nén output thành file `.zip` |
-| `--config config.yaml` | Dùng file config tùy chỉnh |
-| `--install-missing` | Tự động cài các tool ngoài còn thiếu trước khi scan |
-| `--no-strict-requirements` | Bỏ qua tool còn thiếu, vẫn chạy scan |
-| `--skip-requirements-check` | Không kiểm tra requirements, chạy thẳng |
-| `--version` | In version của scanner |
-
-### Ví dụ
-
-```bash
-# Scan và export HTML, tự cài tool còn thiếu
-vfa-audit --format html --install-missing
-
-# Scan với config riêng, nén output
-vfa-audit --config ./config.yaml --format json --zip
-
-# Scan nhanh, bỏ qua kiểm tra tool
-vfa-audit --format console --skip-requirements-check
-```
+Scanner sẽ scan thư mục hiện tại và lưu kết quả vào `./vfa-audit-report/`.
 
 ---
 
