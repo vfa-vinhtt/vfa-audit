@@ -70,15 +70,6 @@ Output được lưu tại:
 ./vfa-audit-report/<YYYYMMDD_HHmm>_<tên-project>.json
 ```
 
-Với `--format policy`, output là thư mục chứa 3 file:
-
-```
-./vfa-audit-report/<YYYYMMDD_HHmm>_<tên-project>/
-├── blockers.json
-├── review-required.json
-└── warnings.json
-```
-
 ---
 
 ## 5. Cập nhật lên phiên bản mới nhất

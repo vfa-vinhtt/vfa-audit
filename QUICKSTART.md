@@ -70,15 +70,6 @@ Reports are saved to:
 ./vfa-audit-report/<YYYYMMDD_HHmm>_<project-name>.json
 ```
 
-With `--format policy`, the output is a directory containing 3 files:
-
-```
-./vfa-audit-report/<YYYYMMDD_HHmm>_<project-name>/
-├── blockers.json
-├── review-required.json
-└── warnings.json
-```
-
 ---
 
 ## 5. Update to the latest version
