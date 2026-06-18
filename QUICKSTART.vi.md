@@ -59,7 +59,7 @@ pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
 Đảm bảo venv đang active (thấy `(vfa-audit)` ở đầu dòng terminal), sau đó **di chuyển vào thư mục dự án cần scan**. Venv vẫn giữ nguyên khi `cd` — không cần activate lại.
 
 ```bash
-cd /path/to/your-project
+cd /path/to/your-repo
 ```
 
 ```bash
@@ -75,12 +75,43 @@ Scanner sẽ scan thư mục hiện tại và lưu kết quả vào `./vfa-audit
 Output được lưu tại:
 
 ```
-./vfa-audit-report/<YYYYMMDD_HHmm>_<tên-project>.json
+./vfa-audit-report/<YYYYMMDD_HHmm>_<tên-repo>.json
 ```
 
 ---
 
-## 5. Cập nhật lên phiên bản mới nhất
+## 5. Upload report lên Google Drive
+
+Sau khi scan xong, upload file report lên Google Drive chung của team theo cấu trúc sau:
+
+**Link Google Drive:** [vfa-audit-reports](https://drive.google.com/drive/folders/1HPQKqHHeSn2vD7IXAfUYYiG5x1VqFP_W)
+
+**Cấu trúc thư mục:**
+
+```
+vfa-audit-reports/
+└── 2026-06/              ← folder theo tháng (YYYY-MM)
+    ├── MPL/              ← Lab MPL
+    │   └── <tên-dự-án>/  ← tạo folder theo tên dự án (project name)
+    │       └── <file>.json
+    └── SPL/              ← Lab SPL
+        └── <tên-dự-án>/
+            └── <file>.json
+```
+
+> Một dự án có thể có nhiều repo — folder Drive đặt theo **tên dự án**, file report bên trong đặt theo **tên repo**.
+
+**Các bước thực hiện:**
+
+1. Mở link Google Drive ở trên
+2. Vào folder tháng hiện tại (ví dụ: `2026-06`)
+3. Vào folder Lab của mình (`MPL` hoặc `SPL`)
+4. Tạo folder mới đặt tên theo **tên dự án** (nếu chưa có)
+5. Upload file report `./vfa-audit-report/<YYYYMMDD_HHmm>_<tên-repo>.json` vào folder đó
+
+---
+
+## 6. Cập nhật lên phiên bản mới nhất
 
 ```bash
 pip install --upgrade git+https://github.com/vfa-vinhtt/vfa-audit.git

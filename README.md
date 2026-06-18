@@ -111,8 +111,8 @@ pip install -r requirements.txt   # only hard dependency is PyYAML
 Run the scanner — any of these work the same way:
 
 ```bash
-python main.py /path/to/project --format html -o report   # entry-point script
-python -m scanner /path/to/project --format console        # as a module (no PATH needed)
+python main.py /path/to/your-repo --format html -o report   # entry-point script
+python -m scanner /path/to/your-repo --format console        # as a module (no PATH needed)
 ```
 
 ### Standalone binary
@@ -130,7 +130,7 @@ Download the binary for your platform, make it executable, and run it directly:
 ```bash
 # macOS / Linux — scan current directory, report saved alongside the binary in ./report/
 chmod +x vfa-audit-macos
-cd /path/to/project && /path/to/vfa-audit-macos
+cd /path/to/your-repo && /path/to/vfa-audit-macos
 ```
 
 ### Build the binary locally
@@ -143,12 +143,12 @@ scripts\build.bat            # Windows        → dist\vfa-audit_v1.0.0.exe
 Run the built binary:
 
 ```bash
-# macOS / Linux — scan current directory, report saved to dist/report/<timestamp>_<project>.json
+# macOS / Linux — scan current directory, report saved to dist/report/<timestamp>_<repo>.json
 chmod +x dist/vfa-audit_v1.0.0
-cd /path/to/project && /path/to/dist/vfa-audit_v1.0.0
+cd /path/to/your-repo && /path/to/dist/vfa-audit_v1.0.0
 
-# Windows — report saved to dist\report\<timestamp>_<project>.json
-cd C:\path\to\project && C:\path\to\dist\vfa-audit_v1.0.0.exe
+# Windows — report saved to dist\report\<timestamp>_<repo>.json
+cd C:\path\to\your-repo && C:\path\to\dist\vfa-audit_v1.0.0.exe
 ```
 
 > The binary is fully self-contained — no Python installation required on the target machine.
@@ -173,7 +173,7 @@ cd C:\path\to\project && C:\path\to\dist\vfa-audit_v1.0.0.exe
 
 ## Usage
 
-Run from anywhere, pointing at the project to scan. If you installed it as a
+Run from anywhere, pointing at the repo to scan. If you installed it as a
 command (Option A), use `vfa-audit`; from a clone (Option B), use `python main.py`:
 
 ```bash
@@ -182,8 +182,8 @@ vfa-audit
 # or, from a clone:
 python main.py
 
-# scan a specific project and write an HTML report
-vfa-audit /path/to/your/project --format html -o report
+# scan a specific repo and write an HTML report
+vfa-audit /path/to/your-repo --format html -o report
 ```
 
 ### Command-line arguments
@@ -192,7 +192,7 @@ vfa-audit /path/to/your/project --format html -o report
 |---|---|
 | `path` | Project to scan (default: current directory). |
 | `--config` | Config file path (defaults to `./config.yaml`, then the config bundled in the package). |
-| `-o, --output` | Output report basename or directory. Defaults to `<tool-dir>/report/<YYYYMMDD_HHmm>_<project-name>`. |
+| `-o, --output` | Output report basename or directory. Defaults to `<tool-dir>/report/<YYYYMMDD_HHmm>_<repo-name>`. |
 | `--format` | `json` (default), `console`, `md`, `html`, or `policy`. |
 | `--zip` | Compress the output file (or policy directory) into a `.zip` archive. |
 | `--strict-requirements` | Stop the scan if any required tool is missing (default). |

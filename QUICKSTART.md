@@ -56,10 +56,10 @@ pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
 
 ## 3. Run the scanner
 
-Make sure the venv is active (you should see `(vfa-audit)` at the beginning of the terminal prompt), then **navigate into the project directory you want to scan**. The venv remains active after `cd` — no need to re-activate.
+Make sure the venv is active (you should see `(vfa-audit)` at the beginning of the terminal prompt), then **navigate into the repo directory you want to scan**. The venv remains active after `cd` — no need to re-activate.
 
 ```bash
-cd /path/to/your-project
+cd /path/to/your-repo
 ```
 
 ```bash
@@ -75,12 +75,41 @@ The scanner will scan the current directory and save the report to `./vfa-audit-
 Reports are saved to:
 
 ```
-./vfa-audit-report/<YYYYMMDD_HHmm>_<project-name>.json
+./vfa-audit-report/<YYYYMMDD_HHmm>_<repo-name>.json
 ```
 
 ---
 
-## 5. Update to the latest version
+## 5. Upload the report to Google Drive
+
+After scanning, upload the report file to the team's shared Google Drive:
+
+**Google Drive link:** [vfa-audit-reports](https://drive.google.com/drive/folders/1HPQKqHHeSn2vD7IXAfUYYiG5x1VqFP_W)
+
+**Folder structure:**
+
+```
+vfa-audit-reports/
+└── 2026-06/              ← month folder (YYYY-MM)
+    ├── MPL/              ← Lab MPL
+    │   └── <project-name>/ ← create a folder named after the project
+    │       └── <file>.json
+    └── SPL/              ← Lab SPL
+        └── <project-name>/
+            └── <file>.json
+```
+
+**Steps:**
+
+1. Open the Google Drive link above
+2. Navigate into the current month folder (e.g. `2026-06`)
+3. Navigate into your lab folder (`MPL` or `SPL`)
+4. Create a new folder named after the **project** (if it doesn't exist yet)
+5. Upload `./vfa-audit-report/<YYYYMMDD_HHmm>_<repo-name>.json` into that folder
+
+---
+
+## 6. Update to the latest version
 
 ```bash
 pip install --upgrade git+https://github.com/vfa-vinhtt/vfa-audit.git
