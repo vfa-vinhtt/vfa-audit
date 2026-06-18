@@ -20,7 +20,11 @@ python3 -m venv ~/.venvs/vfa-audit
 **Windows** — đường dẫn khuyến nghị: `%USERPROFILE%\venvs\vfa-audit`
 
 ```bat
+# Windows (Command Prompt)
 python -m venv %USERPROFILE%\venvs\vfa-audit
+
+# Windows (PowerShell)
+python -m venv "$env:USERPROFILE\venvs\vfa-audit"
 ```
 
 Kích hoạt venv mỗi lần mở terminal mới:
@@ -33,6 +37,10 @@ source ~/.venvs/vfa-audit/bin/activate
 %USERPROFILE%\venvs\vfa-audit\Scripts\activate.bat
 
 # Windows (PowerShell)
+# Lần đầu chạy trên PowerShell có thể bị block do execution policy.
+# Chạy lệnh sau một lần duy nhất để unlock (chỉ ảnh hưởng user hiện tại, không cần quyền admin):
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+# Sau đó activate bình thường:
 ~\venvs\vfa-audit\Scripts\Activate.ps1
 ```
 
