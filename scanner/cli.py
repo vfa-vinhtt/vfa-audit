@@ -63,36 +63,8 @@ def _iter_submodule_names(package) -> list[str]:
     return names
 
 
-def load_config(cli_config: str | None) -> dict:
-    """Resolve and load the YAML configuration.
-
-    Precedence:
-      1. an explicit ``--config PATH`` (warn + fall through if it doesn't exist),
-      2. a ``config.yaml`` in the current working directory,
-      3. the PyInstaller-bundled ``config.yaml`` (``sys._MEIPASS``) when frozen,
-      4. the default config bundled inside the installed package (``default_config.yaml``).
-
-    This keeps the tool working from a source checkout, as an installed ``vfa-audit``
-    command (run from any directory), and as a standalone PyInstaller binary.
-    """
-    def _read(p: Path) -> dict:
-        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-
-    if cli_config:
-        p = Path(cli_config).resolve()
-        if p.exists():
-            return _read(p)
-        print(f"Warning: config file '{p}' not found; using defaults.", file=sys.stderr)
-
-    local = Path("config.yaml")
-    if local.exists():
-        return _read(local)
-
-    if getattr(sys, "frozen", False):
-        bundled = Path(sys._MEIPASS) / "config.yaml"
-        if bundled.exists():
-            return _read(bundled)
-
+def load_config() -> dict:
+    """Load the default config bundled inside the installed package."""
     try:
         text = resources.files("scanner").joinpath("default_config.yaml").read_text(encoding="utf-8")
         return yaml.safe_load(text) or {}
@@ -180,7 +152,6 @@ def main():
     parser = argparse.ArgumentParser(description="A multi-language security scanner.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("path", nargs="?", default=".", help="Path to the project to scan. Defaults to current directory.")
-    parser.add_argument("--config", default=None, help="Path to the configuration file (defaults to ./config.yaml, then the bundled default).")
     parser.add_argument("-o", "--output", default=None, help="Output basename or directory. Defaults to '<YYYYMMDD_HHmm>_<project-name>' under './vfa-audit-report'.")
     parser.add_argument("--format", choices=["json", "md", "html", "console", "policy"], default="json",
                         help="Output format. 'policy' writes blockers/review-required/warnings JSON files into a directory.")
@@ -205,7 +176,7 @@ def main():
     print(f"Scanning project at: {root}")
 
     # 1. Load configuration
-    config = load_config(args.config)
+    config = load_config()
 
     # 2. Initialize scanners. Ignore dirs = a minimal baseline (file_scanner) +
     # language-agnostic dirs from config + per-language dirs declared by the adapters.
