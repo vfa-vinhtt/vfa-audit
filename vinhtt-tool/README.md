@@ -51,7 +51,7 @@ cd /path/to/project
 
 ```bash
 cd /path/to/project
-curl -fsSL https://raw.githubusercontent.com/vfa-vinhtt/vfa-audit/main/vfa-audit-scan.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance/main/vfa-audit-scan.sh | bash
 ```
 
 > **Lưu ý:** Sẽ tự động cài tools còn thiếu qua Homebrew. Cần có Homebrew đã cài sẵn trên máy.

@@ -63,13 +63,13 @@ Installs a `vfa-audit` command you can run from any directory.
 `python -m pip install --user pipx && python -m pipx ensurepath`):
 
 ```bash
-pipx install git+https://github.com/vfa-vinhtt/vfa-audit.git
+pipx install git+https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git
 ```
 
 **Or with pip:**
 
 ```bash
-pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
+pip install git+https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git
 ```
 
 Pin a released version by appending a tag, e.g. `…/vfa-audit.git@v1.0.0`.
@@ -92,13 +92,13 @@ Optional pip-installable helper tools come as **extras** — `assets` (fonttools
 Pillow), `ocr` (pytesseract), `audit` (pip-audit + pip-licenses), or `all`:
 
 ```bash
-pipx install "vfa-audit[all] @ git+https://github.com/vfa-vinhtt/vfa-audit.git"
+pipx install "vfa-audit[all] @ git+https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git"
 ```
 
 ### Option B — run from a clone (for development)
 
 ```bash
-git clone https://github.com/vfa-vinhtt/vfa-audit.git
+git clone https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git
 cd vfa-audit
 
 python -m venv .venv

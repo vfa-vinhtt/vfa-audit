@@ -64,7 +64,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ## 2. Install vfa-audit
 
 ```bash
-pip install git+https://github.com/vfa-vinhtt/vfa-audit.git
+pip install git+https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git
 ```
 
 ---
@@ -127,5 +127,5 @@ vfa-audit-reports/
 ## 6. Update to the latest version
 
 ```bash
-pip install --upgrade git+https://github.com/vfa-vinhtt/vfa-audit.git
+pip install --upgrade git+https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance.git
 ```

@@ -42,8 +42,8 @@ audit = ["pip-audit>=2.7", "pip-licenses>=4.0"]
 all = ["fonttools>=4.0", "Pillow>=10.0", "pytesseract>=0.3", "pip-audit>=2.7", "pip-licenses>=4.0"]
 
 [project.urls]
-Homepage = "https://github.com/vfa-vinhtt/vfa-audit"
-Repository = "https://github.com/vfa-vinhtt/vfa-audit"
+Homepage = "https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance"
+Repository = "https://github.com/Vitalify-Asia-Co-Ltd/vfa-audit-governance"
 
 # Installs a `vfa-audit` command on PATH that calls scanner.cli:main.
 [project.scripts]
