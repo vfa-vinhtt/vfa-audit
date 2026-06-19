@@ -171,6 +171,13 @@ BINARY_INSTALL_COMMANDS = {
         "scoop":  ["scoop", "install", "exiftool"],
         "choco":  ["choco", "install", "exiftool", "-y"],
     },
+    "npm": {
+        "brew":   ["brew", "install", "node"],
+        "winget": ["winget", "install", "-e", "--id", "OpenJS.NodeJS",
+                   "--accept-source-agreements", "--accept-package-agreements"],
+        "scoop":  ["scoop", "install", "nodejs"],
+        "choco":  ["choco", "install", "nodejs", "-y"],
+    },
 }
 
 # Official GitHub release-binary download as a last-resort fallback (no package
@@ -180,6 +187,7 @@ BINARY_INSTALL_COMMANDS = {
 GITHUB_RELEASES = {
     "gitleaks": "gitleaks/gitleaks",
     "trufflehog": "trufflesecurity/trufflehog",
+    "trivy": "aquasecurity/trivy",
 }
 
 # GitHub owner/repo for ALL tools distributed as release binaries — used for remote
@@ -689,7 +697,7 @@ def _platform_tokens() -> Tuple[List[str], List[str]]:
         os_tok = ["linux"]
     machine = platform.machine().lower()
     if machine in ("amd64", "x86_64", "x64"):
-        arch_tok = ["amd64", "x86_64", "x64"]
+        arch_tok = ["amd64", "x86_64", "x64", "64bit"]  # "64bit" matches trivy's naming
     elif machine in ("arm64", "aarch64"):
         arch_tok = ["arm64", "aarch64"]
     else:
@@ -870,8 +878,49 @@ def attempt_auto_install(missing: List[Requirement], binary_installer: str = "au
             if via_pkg_mgr:
                 pkg_mgr_installs.append(r.command)
         else:
-            last = output.strip().splitlines()
-            print(f"            failed (exit {proc.returncode}): {last[-1] if last else 'see tool output'}")
+            # Detect Homebrew arch mismatch: ARM brew can't install under x86_64 (Rosetta).
+            # Retry with the x86_64 Homebrew at /usr/local/bin/brew when available.
+            brew_arch_mismatch = (
+                via_pkg_mgr and manager == "brew"
+                and ("x86_64" in output or "Intel default prefix" in output)
+                and "/usr/local" in output
+            )
+            if brew_arch_mismatch:
+                x86_brew = "/usr/local/bin/brew"
+                if os.path.isfile(x86_brew):
+                    retry_cmd = [x86_brew] + list(cmd[1:])
+                    print(f"            brew: ARM/x86_64 mismatch — retrying with {x86_brew}")
+                    try:
+                        proc2 = subprocess.run(retry_cmd, capture_output=True, text=True,
+                                               encoding="utf-8", errors="replace", timeout=600)
+                        output2 = (proc2.stderr or "") + (proc2.stdout or "")
+                        if proc2.returncode == 0 or _already_satisfied(proc2.returncode, output2):
+                            print("            ok")
+                            installed_ok.add(r.command)
+                            pkg_mgr_installs.append(r.command)
+                            continue
+                        output = output2
+                        proc = proc2
+                    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e2:
+                        print(f"            could not run x86_64 brew ({type(e2).__name__})")
+                else:
+                    print("            brew: ARM Homebrew cannot install x86_64 packages under Rosetta")
+                    print("            tip: install x86_64 Homebrew into /usr/local, or install manually")
+
+            # GitHub release fallback: when a package-manager install fails but we have
+            # an official prebuilt binary, try downloading it before giving up.
+            if r.command not in installed_ok and r.command in GITHUB_RELEASES:
+                repo = GITHUB_RELEASES[r.command]
+                print(f"            trying GitHub release download as fallback…")
+                gh_ok, gh_detail = install_from_github_release(r.command, repo)
+                if gh_ok:
+                    print(f"            ok -> {gh_detail}")
+                    installed_ok.add(r.command)
+                    continue
+
+            if r.command not in installed_ok:
+                last = output.strip().splitlines()
+                print(f"            failed (exit {proc.returncode}): {last[-1] if last else 'see tool output'}")
 
     if pkg_mgr_installs:
         print(f"  Note: {', '.join(pkg_mgr_installs)} installed via a package manager - if the scan "
