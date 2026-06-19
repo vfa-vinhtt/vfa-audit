@@ -1,5 +1,20 @@
 # vfa-audit — Hướng dẫn cài đặt và sử dụng
 
+## Mục đích audit
+
+Trả lời bốn câu hỏi trước khi bàn giao sản phẩm hoặc review code nhận từ đối tác / bên thứ ba:
+
+| Câu hỏi | Plugin | Công cụ |
+|---|---|---|
+| **Thông tin nhạy cảm** — Source code có chứa secrets không? (passwords, AWS keys, tokens, private keys…) | `secret_checker` | regex + entropy, Gitleaks (git history), TruffleHog, Trivy |
+| **CVE** — Các dependency có lỗ hổng bảo mật đã biết không? | `dependency_checker` | OSV API, pip-audit / npm audit / govulncheck / dotnet / composer, Trivy |
+| **License font** — Có font nào được dùng không có commercial license không? | `asset_checker` | fonttools (fsType embedding rights), ExifTool (copyright/license text), SHA256 |
+| **License thư viện** — License của các dependency có tương thích với commercial use không? | `license_checker` | lockfile/manifest content, pip-licenses / license-checker / go-licenses / …, Trivy `--license-full` |
+
+Kiểm tra bổ sung: **PII** trong source code, **cấu hình không an toàn**, **`.env` bị lộ**, **`.gitignore` thiếu rule**.
+
+---
+
 ## Yêu cầu
 
 - Python **3.10** trở lên
